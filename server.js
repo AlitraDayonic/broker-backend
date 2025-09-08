@@ -20,36 +20,13 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static('public')); // serve frontend
 
-// const dbConfig = {
-//     host: process.env.MYSQLHOST || 'localhost',
-//     user: process.env.MYSQLUSER || 'root',
-//     password: process.env.MYSQLPASSWORD || '',
-//     database: process.env.MYSQLDATABASE || 'swiftxchangerate',
-//     port: process.env.MYSQLPORT || 3306,
-//     waitForConnections: true,
-//     connectionLimit: 10,
-//     queueLimit: 0
-// };
-
-const dbConfig = {
-    uri:process.env.MYSQL_URL,
-    waitForConnections: true,
-    connectionLimit: 10,
-    queueLimit: 0
-};
-
-// Pool
-const mysql = require("mysql2/promise");
-
-
-// Always prefer MYSQL_URL and ignore the rest
+// Always prefer MYSQL_URL
 if (!process.env.MYSQL_URL) {
   throw new Error("❌ MYSQL_URL not set in environment!");
 }
 
+// Connection pool
 const pool = mysql.createPool(process.env.MYSQL_URL);
-
-export default pool;
 
 
 
@@ -499,5 +476,6 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 

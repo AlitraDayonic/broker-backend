@@ -39,7 +39,17 @@ const dbConfig = {
 };
 
 // Pool
+import mysql from "mysql2/promise";
+
+// Always prefer MYSQL_URL and ignore the rest
+if (!process.env.MYSQL_URL) {
+  throw new Error("❌ MYSQL_URL not set in environment!");
+}
+
 const pool = mysql.createPool(process.env.MYSQL_URL);
+
+export default pool;
+
 
 
 // Initialize tables if missing
@@ -488,3 +498,4 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+

@@ -20,29 +20,162 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static('public')); // serve frontend
 
+// const dbConfig = {
+//     host: process.env.MYSQLHOST || 'localhost',
+//     user: process.env.MYSQLUSER || 'root',
+//     password: process.env.MYSQLPASSWORD || '',
+//     database: process.env.MYSQLDATABASE || 'swiftxchangerate',
+//     port: process.env.MYSQLPORT || 3306,
+//     waitForConnections: true,
+//     connectionLimit: 10,
+//     queueLimit: 0
+// };
+
 const dbConfig = {
-    host: process.env.MYSQLHOST || 'localhost',
-    user: process.env.MYSQLUSER || 'root',
-    password: process.env.MYSQLPASSWORD || '',
-    database: process.env.MYSQLDATABASE || 'swiftxchangerate',
-    port: process.env.MYSQLPORT || 3306,
+    uri:process.env.MYSQL_URL,
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0
 };
 
 // Pool
-const pool = mysql.createPool(dbConfig);
+const pool = mysql.createPool(process.env.MYSQL_URL);
 
-// Session store
+
+// Initialize tables if missing
+async function initializeDatabase() {
+    try {
+        // Create users table
+        await pool.execute(`
+            CREATE TABLE IF NOT EXISTS users (
+                id INT PRIMARY KEY AUTO_INCREMENT,
+                first_name VARCHAR(50) NOT NULL,
+                last_name VARCHAR(50) NOT NULL,
+                username VARCHAR(50) UNIQUE NOT NULL,
+                email VARCHAR(100) UNIQUE NOT NULL,
+                phone VARCHAR(20),
+                country VARCHAR(50),
+                password_hash VARCHAR(255) NOT NULL,
+                verification_code VARCHAR(10),
+                email_verified BOOLEAN DEFAULT FALSE,
+                status ENUM('pending', 'active', 'suspended') DEFAULT 'pending',
+                failed_logins INT DEFAULT 0,
+                last_login_at TIMESTAMP NULL,
+                last_login_ip VARCHAR(45),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        // User profiles
+        await pool.execute(`
+            CREATE TABLE IF NOT EXISTS user_profiles (
+                id INT PRIMARY KEY AUTO_INCREMENT,
+                user_id INT NOT NULL,
+                account_type ENUM('demo', 'live') DEFAULT 'demo',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        `);
+
+        // Trading accounts
+        await pool.execute(`
+            CREATE TABLE IF NOT EXISTS trading_accounts (
+                id INT PRIMARY KEY AUTO_INCREMENT,
+                user_id INT NOT NULL,
+                account_number VARCHAR(50) UNIQUE NOT NULL,
+                account_type ENUM('demo', 'live') DEFAULT 'demo',
+                balance DECIMAL(15,2) DEFAULT 10000,
+                currency VARCHAR(3) DEFAULT 'USD',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        `);
+        
+
+        // Trades
+await pool.execute(`
+    CREATE TABLE IF NOT EXISTS trades (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        user_id INT NOT NULL,
+        account_id INT NOT NULL,
+        asset VARCHAR(50) NOT NULL,
+        asset_name VARCHAR(100),
+        quantity DECIMAL(15,8) NOT NULL,
+        price DECIMAL(15,2) NOT NULL,
+        total_amount DECIMAL(15,2) NOT NULL,
+        trade_type ENUM('buy','sell') NOT NULL,
+        status ENUM('pending','completed','failed') DEFAULT 'completed',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (account_id) REFERENCES trading_accounts(id) ON DELETE CASCADE
+    )
+`);
+
+
+
+
+        // Optional: add deposits table
+        await pool.execute(`
+            CREATE TABLE IF NOT EXISTS deposits (
+                id INT PRIMARY KEY AUTO_INCREMENT,
+                user_id INT NOT NULL,
+                account_id INT NOT NULL,
+                amount DECIMAL(15,2) NOT NULL,
+                currency VARCHAR(3) DEFAULT 'USD',
+                payment_method VARCHAR(50),
+                reference_number VARCHAR(100),
+                status ENUM('pending', 'completed', 'failed') DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (account_id) REFERENCES trading_accounts(id) ON DELETE CASCADE
+            )
+        `);
+
+        // Optional: add withdrawals table
+        await pool.execute(`
+            CREATE TABLE IF NOT EXISTS withdrawals (
+                id INT PRIMARY KEY AUTO_INCREMENT,
+                user_id INT NOT NULL,
+                account_id INT NOT NULL,
+                amount DECIMAL(15,2) NOT NULL,
+                currency VARCHAR(3) DEFAULT 'USD',
+                payment_method VARCHAR(50),
+                bank_details JSON,
+                reference_number VARCHAR(100),
+                status ENUM('pending', 'completed', 'failed') DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (account_id) REFERENCES trading_accounts(id) ON DELETE CASCADE
+            )
+        `);
+
+        console.log('✅ Database tables initialized successfully');
+    } catch (error) {
+        console.error('❌ Database initialization error:', error);
+    }
+}
+
+// Call at startup
+initializeDatabase();
+
+
+
+
+
+
+// Parse the MySQL URL from Railway (e.g. mysql://root:pass@host:port/dbname)
+const mysql_url = new URL(process.env.MYSQL_URL || 'mysql://root:@localhost:3306/test');
+
+// Session store using parsed values
 const sessionStore = new MySQLStore({
-    host: dbConfig.host,
-    port: dbConfig.port,
-    user: dbConfig.user,
-    password: dbConfig.password,
-    database: dbConfig.database,
+    host: mysql_url.hostname,                  // e.g. trolley.proxy.rlwy.net
+    port: mysql_url.port,                      // e.g. 55683
+    user: mysql_url.username,                  // e.g. root
+    password: mysql_url.password,              // your MySQL password
+    database: mysql_url.pathname.slice(1),     // remove leading "/" from "/railway"
     createDatabaseTable: true
 });
+
 
 // Sessions
 app.use(session({
@@ -52,16 +185,18 @@ app.use(session({
     resave: false,
     saveUninitialized: false,
     cookie: {
-        maxAge: 24 * 60 * 60 * 1000,
-        secure: false
-    }
+  maxAge: 24 * 60 * 60 * 1000,
+  secure: false,        
+  sameSite: 'lax'
+}
+
 }));
 
 // Email transporter - manual Gmail configuration (no service override)
 const emailTransporter = nodemailer.createTransport({
     host: 'smtp.gmail.com',
     port: 465,
-    secure: false,
+    secure: true,
     auth: {
         user: process.env.EMAIL_USER || 'your-email@gmail.com',
         pass: process.env.EMAIL_PASS || 'your-email-password'
@@ -270,8 +405,86 @@ app.post('/api/logout', (req, res) => {
     });
 });
 
+
+// ================= Transaction History Routes ================= //
+
+// 1. Trades History
+app.get('/api/trades', authRequired, async (req, res) => {
+    try {
+        const [rows] = await pool.execute(
+            "SELECT id, asset, asset_name, quantity, price, total_amount, trade_type, status, created_at " +
+            "FROM trades WHERE user_id=? ORDER BY created_at DESC",
+            [req.session.userId]
+        );
+        res.json({ success: true, trades: rows });
+    } catch (err) {
+        console.error(err);
+        res.json({ success: false, message: "Failed to fetch trades" });
+    }
+});
+
+// 2. Deposits History
+app.get('/api/deposits', authRequired, async (req, res) => {
+    try {
+        const [rows] = await pool.execute(
+            "SELECT id, amount, currency, payment_method, reference_number, status, created_at " +
+            "FROM deposits WHERE user_id=? ORDER BY created_at DESC",
+            [req.session.userId]
+        );
+        res.json({ success: true, deposits: rows });
+    } catch (err) {
+        console.error(err);
+        res.json({ success: false, message: "Failed to fetch deposits" });
+    }
+});
+
+// 3. Withdrawals History
+app.get('/api/withdrawals', authRequired, async (req, res) => {
+    try {
+        const [rows] = await pool.execute(
+            "SELECT id, amount, currency, payment_method, bank_details, reference_number, status, created_at " +
+            "FROM withdrawals WHERE user_id=? ORDER BY created_at DESC",
+            [req.session.userId]
+        );
+        res.json({ success: true, withdrawals: rows });
+    } catch (err) {
+        console.error(err);
+        res.json({ success: false, message: "Failed to fetch withdrawals" });
+    }
+});
+
+// 4. Combined Transaction History
+app.get('/api/history', authRequired, async (req, res) => {
+    try {
+        const [rows] = await pool.query(`
+            SELECT 'trade' AS type, id, asset AS description, total_amount AS amount, 'USD' AS currency, status, created_at
+            FROM trades
+            WHERE user_id=?
+
+            UNION ALL
+
+            SELECT 'deposit' AS type, id, payment_method AS description, amount, currency, status, created_at
+            FROM deposits
+            WHERE user_id=?
+
+            UNION ALL
+
+            SELECT 'withdrawal' AS type, id, payment_method AS description, amount, currency, status, created_at
+            FROM withdrawals
+            WHERE user_id=?
+
+            ORDER BY created_at DESC
+        `, [req.session.userId, req.session.userId, req.session.userId]);
+
+        res.json({ success: true, history: rows });
+    } catch (err) {
+        console.error(err);
+        res.json({ success: false, message: "Failed to fetch history" });
+    }
+});
+
 // Start server
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`📊 Database: ${dbConfig.database}`);
+   console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });

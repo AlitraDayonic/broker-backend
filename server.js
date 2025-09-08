@@ -39,7 +39,8 @@ const dbConfig = {
 };
 
 // Pool
-import mysql from "mysql2/promise";
+const mysql = require("mysql2/promise");
+
 
 // Always prefer MYSQL_URL and ignore the rest
 if (!process.env.MYSQL_URL) {
@@ -498,4 +499,5 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 

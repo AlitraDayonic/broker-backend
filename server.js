@@ -162,7 +162,7 @@ const sessionStore = new MySQLStore({
     password: mysql_url.password,              // your MySQL password
     database: mysql_url.pathname.slice(1),     // remove leading "/" from "/railway"
     createDatabaseTable: true
-});
+}, pool);
 
 
 // Sessions
@@ -476,6 +476,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

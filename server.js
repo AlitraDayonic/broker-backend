@@ -269,7 +269,7 @@ app.post('/api/register', async (req, res) => {
         await pool.execute("INSERT INTO user_profiles (user_id, account_type) VALUES (?, 'demo')", [userId]);
         await pool.execute("INSERT INTO trading_accounts (user_id, account_number, account_type, balance, currency) VALUES (?, ?, 'demo', 10000, 'USD')", [userId, generateAccountNumber()]);
 
-        await sendVerificationEmail(email, code, firstName);
+        // await sendVerificationEmail(email, code, firstName);
 
         res.json({ success: true, message: "Registered successfully. Please verify your email." });
     } catch (err) {
@@ -476,6 +476,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

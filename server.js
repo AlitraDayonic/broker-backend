@@ -471,11 +471,39 @@ app.get('/api/history', authRequired, async (req, res) => {
     }
 });
 
+// ================= Settings Routes ================= // 
+// Get user profile for settings page 
+app.get('/api/profile', authRequired, async (req, res) => {
+  try { 
+    const [user] = await pool.execute(
+      "SELECT first_name, last_name, email, phone, country FROM users WHERE id=?", 
+      [req.session.userId] 
+    ); res.json({ success: true, user: user[0] }); } catch (err) {
+    console.error('Profile fetch error:', err);
+    res.json({ success: false, message: "Failed to fetch profile" });
+  } 
+}); 
+// Update user profile
+app.put('/api/profile', authRequired, async (req, res) => {
+  const { firstName, lastName, email, phone, country } = req.body;
+  try {
+    await pool.execute( 
+      "UPDATE users SET first_name=?, last_name=?, email=?, phone=?, country=? WHERE id=?",
+      [firstName, lastName, email, phone, country, req.session.userId]
+    );
+    res.json({ success: true, message: "Profile updated successfully" }); 
+  } catch (err) { 
+    console.error('Profile update error:', err);
+    res.json({ success: false, message: "Failed to update profile" });
+  } 
+});
+
 // Start server
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

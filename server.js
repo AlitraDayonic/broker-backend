@@ -252,7 +252,7 @@ function authRequired(req, res, next) {
 
 // Register
 app.post('/api/register', async (req, res) => {
-    const { firstName, lastName, username, email, phone, country, password } = req.body;
+    const { firstName, lastName, username, email, phone, country, accountType, password } = req.body;
     try {
         const [existing] = await pool.execute("SELECT id FROM users WHERE email = ? OR username = ?", [email, username]);
         if (existing.length > 0) return res.json({ success: false, message: "Email or username already in use" });
@@ -266,8 +266,11 @@ app.post('/api/register', async (req, res) => {
         );
 
         const userId = result.insertId;
-        await pool.execute("INSERT INTO user_profiles (user_id, account_type) VALUES (?, 'demo')", [userId]);
-        await pool.execute("INSERT INTO trading_accounts (user_id, account_number, account_type, balance, currency) VALUES (?, ?, 'demo', 10000, 'USD')", [userId, generateAccountNumber()]);
+        await pool.execute("INSERT INTO user_profiles (user_id, account_type) VALUES (?, ?)", [userId, accountType || 'demo']);
+       const startingBalance = accountType === 'live' ? 0 : 10000; 
+      await pool.execute( 
+        "INSERT INTO trading_accounts (user_id, account_number, account_type, balance, currency) VALUES (?, ?, ?, ?, 'USD')", 
+        [userId, generateAccountNumber(), accountType || 'demo', startingBalance] );
 
         // await sendVerificationEmail(email, code, firstName);
 
@@ -503,6 +506,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

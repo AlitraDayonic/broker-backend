@@ -426,6 +426,30 @@ app.post('/api/logout', (req, res) => {
     });
 });
 
+// Admin access verification endpoint
+app.get('/api/verify-admin-access', async (req, res) => {
+    try {
+        if (!req.session.userId) {
+            return res.json({ success: false, message: "Not logged in" });
+        }
+
+        // Destructure properly
+        const [rows] = await pool.execute(
+            "SELECT role FROM users WHERE id = ?", 
+            [req.session.userId]
+        );
+
+        if (rows.length === 0 || rows[0].role !== 'admin') {
+            return res.json({ success: false, message: "Admin access required" });
+        }
+
+        res.json({ success: true, message: "Admin access verified" });
+    } catch (error) {
+        console.error('Admin verification error:', error);
+        res.json({ success: false, message: "Verification failed" });
+    }
+});
+
 
 // ================= Transaction History Routes ================= //
 
@@ -536,6 +560,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

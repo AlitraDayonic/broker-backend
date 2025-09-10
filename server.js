@@ -300,25 +300,55 @@ app.post('/api/verify-email', async (req, res) => {
 
 
 // Login (without email verification check)
+// Enhanced Login with account type detection
 app.post('/api/login', async (req, res) => {
     const { email, password } = req.body;
     try {
         const [rows] = await pool.execute("SELECT * FROM users WHERE email=?", [email]);
         if (rows.length === 0) return res.json({ success: false, message: "Invalid email or password" });
-
+        
         const user = rows[0];
-
         const valid = await bcrypt.compare(password, user.password_hash);
         if (!valid) {
             await pool.execute("UPDATE users SET failed_logins = failed_logins + 1 WHERE id=?", [user.id]);
             return res.json({ success: false, message: "Invalid email or password" });
         }
 
+        // Get user's trading account info to determine account type
+        const [accountRows] = await pool.execute(
+            "SELECT account_type FROM trading_accounts WHERE user_id=? ORDER BY id DESC LIMIT 1", 
+            [user.id]
+        );
+        
+        const accountType = accountRows.length > 0 ? accountRows[0].account_type : 'demo';
+        
         req.session.userId = user.id;
         req.session.userEmail = user.email;
+        req.session.accountType = accountType; // Store account type in session
+        
         await pool.execute("UPDATE users SET failed_logins=0, last_login_at=NOW(), last_login_ip=? WHERE id=?", [req.ip, user.id]);
-
-        res.json({ success: true, message: "Login successful", redirectUrl: "/dashboard.html" });
+        
+        // Determine redirect based on account type
+        let redirectUrl = "/dashboard.html"; // Default to dashboard
+        
+        if (accountType === 'live') {
+            redirectUrl = "/dashboard.html"; // Live users go to dashboard
+        } else {
+            redirectUrl = "/dashboard.html"; // Demo users also go to dashboard
+        }
+        
+        res.json({ 
+            success: true, 
+            message: "Login successful", 
+            redirectUrl: redirectUrl,
+            user: {
+                id: user.id,
+                email: user.email,
+                firstName: user.first_name,
+                lastName: user.last_name,
+                accountType: accountType
+            }
+        });
     } catch (err) {
         console.error(err);
         res.json({ success: false, message: "Login failed" });
@@ -506,6 +536,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

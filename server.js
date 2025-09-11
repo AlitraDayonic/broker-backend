@@ -146,6 +146,41 @@ await pool.execute(`
 // Call at startup
 initializeDatabase();
 
+// Add this after your pool creation in server.js
+async function initializeDatabase() {
+    try {
+        // Check if "role" column exists
+        const [rows] = await pool.execute(`
+            SHOW COLUMNS FROM users LIKE 'role'
+        `);
+
+        if (rows.length === 0) {
+            await pool.execute(`
+                ALTER TABLE users 
+                ADD COLUMN role ENUM('user', 'admin') DEFAULT 'user'
+            `);
+            console.log('✅ Role column added to users table');
+        } else {
+            console.log('ℹ️ Role column already exists');
+        }
+
+        // Ensure your account is admin
+        await pool.execute(`
+            UPDATE users 
+            SET role = 'admin' 
+            WHERE email = 'swiftxchangepro@gmail.com'
+        `);
+
+        console.log('✅ Database initialized with admin role');
+    } catch (error) {
+        console.error('Database initialization error:', error.message);
+    }
+}
+
+// Call this function after your pool setup
+initializeDatabase();
+
+
 
 
 
@@ -581,6 +616,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

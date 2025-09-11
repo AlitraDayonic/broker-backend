@@ -529,30 +529,51 @@ app.get('/api/history', authRequired, async (req, res) => {
 });
 
 // ================= Settings Routes ================= // 
-// Get user profile for settings page 
+// Get user profile
 app.get('/api/profile', authRequired, async (req, res) => {
-  try { 
-    const [user] = await pool.execute(
-      "SELECT first_name, last_name, email, phone, country FROM users WHERE id=?", 
-      [req.session.userId] 
-    ); res.json({ success: true, user: user[0] }); } catch (err) {
-    console.error('Profile fetch error:', err);
-    res.json({ success: false, message: "Failed to fetch profile" });
-  } 
-}); 
-// Update user profile
+    try {
+        const [user] = await pool.execute(
+            "SELECT first_name, last_name, email, phone, country FROM users WHERE id=?",
+            [req.session.userId]
+        );
+        res.json({ success: true, user: user[0] });
+    } catch (err) {
+        res.json({ success: false, message: "Failed to fetch profile" });
+    }
+});
+
+// Update user profile  
 app.put('/api/profile', authRequired, async (req, res) => {
-  const { firstName, lastName, email, phone, country } = req.body;
-  try {
-    await pool.execute( 
-      "UPDATE users SET first_name=?, last_name=?, email=?, phone=?, country=? WHERE id=?",
-      [firstName, lastName, email, phone, country, req.session.userId]
-    );
-    res.json({ success: true, message: "Profile updated successfully" }); 
-  } catch (err) { 
-    console.error('Profile update error:', err);
-    res.json({ success: false, message: "Failed to update profile" });
-  } 
+    const { firstName, lastName, email, phone, country } = req.body;
+    try {
+        await pool.execute(
+            "UPDATE users SET first_name=?, last_name=?, email=?, phone=?, country=? WHERE id=?",
+            [firstName, lastName, email, phone, country, req.session.userId]
+        );
+        res.json({ success: true, message: "Profile updated successfully" });
+    } catch (err) {
+        res.json({ success: false, message: "Failed to update profile" });
+    }
+});
+
+// Change password
+app.put('/api/change-password', authRequired, async (req, res) => {
+    const { currentPassword, newPassword } = req.body;
+    try {
+        const [user] = await pool.execute("SELECT password_hash FROM users WHERE id=?", [req.session.userId]);
+        const valid = await bcrypt.compare(currentPassword, user[0].password_hash);
+        
+        if (!valid) {
+            return res.json({ success: false, message: "Current password is incorrect" });
+        }
+        
+        const newHash = await bcrypt.hash(newPassword, 12);
+        await pool.execute("UPDATE users SET password_hash=? WHERE id=?", [newHash, req.session.userId]);
+        
+        res.json({ success: true, message: "Password updated successfully" });
+    } catch (err) {
+        res.json({ success: false, message: "Failed to update password" });
+    }
 });
 
 // Start server
@@ -560,6 +581,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

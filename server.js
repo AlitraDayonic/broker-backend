@@ -440,6 +440,15 @@ app.get('/api/current-account-type', authRequired, async (req, res) => {
     });
 });
 
+// ================= Account Switching Routes ================= //
+// Get current account type
+app.get('/api/current-account-type', authRequired, async (req, res) => {
+    res.json({ 
+        success: true, 
+        accountType: req.session.accountType || 'demo' 
+    });
+});
+
 // Switch account type
 app.post('/api/switch-account-type', authRequired, async (req, res) => {
     const { accountType } = req.body;
@@ -448,37 +457,34 @@ app.post('/api/switch-account-type', authRequired, async (req, res) => {
         return res.json({ success: false, message: 'Invalid account type' });
     }
     
-    req.session.accountType = accountType;
-    res.json({ 
-        success: true, 
-        message: `Switched to ${accountType} account`,
-        accountType 
-    });
-});
-
-    // Update session
-    req.session.accountType = accountType;
-
-    // Optional: ensure the account exists in trading_accounts
-    const [rows] = await pool.execute(
-        "SELECT id FROM trading_accounts WHERE user_id=? AND account_type=?",
-        [req.session.userId, accountType]
-    );
-
-    if (rows.length === 0) {
-        // Create account if missing
-        const startingBalance = accountType === 'live' ? 0 : 10000;
-        await pool.execute(
-            "INSERT INTO trading_accounts (user_id, account_number, account_type, balance, currency) VALUES (?, ?, ?, ?, 'USD')",
-            [req.session.userId, 'SXR' + Date.now(), accountType, startingBalance]
+    try {
+        // Update session
+        req.session.accountType = accountType;
+        
+        // Ensure the account exists in trading_accounts
+        const [rows] = await pool.execute(
+            "SELECT id FROM trading_accounts WHERE user_id=? AND account_type=?",
+            [req.session.userId, accountType]
         );
+        
+        if (rows.length === 0) {
+            // Create account if missing
+            const startingBalance = accountType === 'live' ? 0 : 10000;
+            await pool.execute(
+                "INSERT INTO trading_accounts (user_id, account_number, account_type, balance, currency) VALUES (?, ?, ?, ?, 'USD')",
+                [req.session.userId, 'SXR' + Date.now(), accountType, startingBalance]
+            );
+        }
+        
+        res.json({ 
+            success: true, 
+            message: `Switched to ${accountType} account`,
+            accountType 
+        });
+    } catch (error) {
+        console.error('Account switch error:', error);
+        res.json({ success: false, message: 'Failed to switch account' });
     }
-
-    res.json({ 
-        success: true, 
-        message: `Switched to ${accountType} account`,
-        accountType 
-    });
 });
 
 
@@ -696,6 +702,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

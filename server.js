@@ -438,15 +438,11 @@ app.get('/api/current-account-type', authRequired, async (req, res) => {
 app.post('/api/switch-account-type', authRequired, async (req, res) => {
     const { accountType } = req.body;
     
-    console.log('🔄 Switch request:', { accountType, currentSession: req.session.accountType });
-    
     if (!['demo', 'live'].includes(accountType)) {
         return res.json({ success: false, message: 'Invalid account type' });
     }
     
     req.session.accountType = accountType;
-    console.log('✅ Session updated:', { newAccountType: req.session.accountType });
-    
     res.json({ 
         success: true, 
         message: `Switched to ${accountType} account`,
@@ -694,6 +690,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

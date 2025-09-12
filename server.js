@@ -395,6 +395,7 @@ app.get('/api/dashboard', authRequired, async (req, res) => {
   try { const [user] = await pool.execute("SELECT first_name, last_name, email, status FROM users WHERE id=?", [req.session.userId]);
        // Get account type from session (default to demo) 
        const accountType = req.session.accountType || 'demo'; 
+       console.log('📊 Dashboard request:', { userId: req.session.userId, accountType });
        // Get specific account based on type 
        const [accounts] = await pool.execute(
          "SELECT account_number, account_type, balance, currency FROM trading_accounts WHERE user_id=? AND account_type=?",
@@ -411,8 +412,10 @@ app.get('/api/dashboard', authRequired, async (req, res) => {
          // Get the newly created account
          const [newAccounts] = await pool.execute(
            "SELECT account_number, account_type, balance, currency FROM trading_accounts WHERE user_id=? AND account_type=?",
+           
            [req.session.userId, accountType]
          );
+         
          return res.json({ success: true, user: user[0], accounts: newAccounts });
        }
        res.json({ success: true, user: user[0], accounts });
@@ -436,9 +439,21 @@ app.get('/api/current-account-type', authRequired, async (req, res) => {
 app.post('/api/switch-account-type', authRequired, async (req, res) => {
     const { accountType } = req.body;
     
+    console.log('🔄 Switch request:', { accountType, currentSession: req.session.accountType });
+    
     if (!['demo', 'live'].includes(accountType)) {
         return res.json({ success: false, message: 'Invalid account type' });
     }
+    
+    req.session.accountType = accountType;
+    console.log('✅ Session updated:', { newAccountType: req.session.accountType });
+    
+    res.json({ 
+        success: true, 
+        message: `Switched to ${accountType} account`,
+        accountType 
+    });
+});
 
     // Update session
     req.session.accountType = accountType;
@@ -680,6 +695,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

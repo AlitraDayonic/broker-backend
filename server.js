@@ -395,7 +395,6 @@ app.get('/api/dashboard', authRequired, async (req, res) => {
   try { const [user] = await pool.execute("SELECT first_name, last_name, email, status FROM users WHERE id=?", [req.session.userId]);
        // Get account type from session (default to demo) 
        const accountType = req.session.accountType || 'demo'; 
-       console.log('📊 Dashboard request:', { userId: req.session.userId, accountType });
        // Get specific account based on type 
        const [accounts] = await pool.execute(
          "SELECT account_number, account_type, balance, currency FROM trading_accounts WHERE user_id=? AND account_type=?",

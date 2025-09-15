@@ -28,7 +28,7 @@ if (!process.env.MYSQL_URL) {
   throw new Error("❌ MYSQL_URL not set in environment!");
 }
 // const helmet = require('helmet');
-const rateLimit = require('express-rate-limit');
+// const rateLimit = require('express-rate-limit');
 
 if (process.env.NODE_ENV === 'production') {
   app.set('trust proxy', 1);
@@ -760,6 +760,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

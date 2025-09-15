@@ -315,9 +315,6 @@ function authRequired(req, res, next) {
 
 
 
-const helmet = require('helmet');
-const rateLimit = require('express-rate-limit');
-
 
 
 // ------------------- ROUTES -------------------
@@ -763,6 +760,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

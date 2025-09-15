@@ -27,19 +27,28 @@ app.use(express.static('public')); // serve frontend
 if (!process.env.MYSQL_URL) {
   throw new Error("❌ MYSQL_URL not set in environment!");
 }
-// TRUST PROXY (important when behind proxies/reverse proxies in production)
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+
 if (process.env.NODE_ENV === 'production') {
   app.set('trust proxy', 1);
 }
 
-// CORS - allow your frontend origin and enable credentials
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'https://your-frontend-domain.netlify.app';
 
+app.use(helmet());
 app.use(cors({
   origin: FRONTEND_ORIGIN,
   credentials: true,
   methods: ['GET','POST','PUT','DELETE','OPTIONS']
 }));
+
+const limiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 30, // limit requests per minute
+});
+app.use(limiter);
+
 
 // SESSION
 app.use(session({
@@ -308,31 +317,6 @@ function authRequired(req, res, next) {
 
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-
-if (process.env.NODE_ENV === 'production') {
-  app.set('trust proxy', 1);
-}
-
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'https://your-frontend-domain.netlify.app';
-
-app.use(helmet());
-app.use(cors({
-  origin: FRONTEND_ORIGIN,
-  credentials: true,
-  methods: ['GET','POST','PUT','DELETE','OPTIONS']
-}));
-
-const limiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 30, // limit requests per minute
-});
-app.use(limiter);
-
-
-
-
-
-
 
 
 
@@ -779,6 +763,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

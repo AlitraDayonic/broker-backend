@@ -27,7 +27,7 @@ app.use(express.static('public')); // serve frontend
 if (!process.env.MYSQL_URL) {
   throw new Error("❌ MYSQL_URL not set in environment!");
 }
-const helmet = require('helmet');
+// const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 
 if (process.env.NODE_ENV === 'production') {
@@ -36,7 +36,7 @@ if (process.env.NODE_ENV === 'production') {
 
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'https://your-frontend-domain.netlify.app';
 
-app.use(helmet());
+// app.use(helmet());
 app.use(cors({
   origin: FRONTEND_ORIGIN,
   credentials: true,
@@ -760,6 +760,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

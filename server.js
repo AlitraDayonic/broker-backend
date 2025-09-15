@@ -14,6 +14,9 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+
+
+
 // Middleware
 app.use(cors());
 app.use(express.json());
@@ -24,9 +27,38 @@ app.use(express.static('public')); // serve frontend
 if (!process.env.MYSQL_URL) {
   throw new Error("❌ MYSQL_URL not set in environment!");
 }
+// TRUST PROXY (important when behind proxies/reverse proxies in production)
+if (process.env.NODE_ENV === 'production') {
+  app.set('trust proxy', 1);
+}
+
+// CORS - allow your frontend origin and enable credentials
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'https://your-frontend-domain.netlify.app';
+
+app.use(cors({
+  origin: FRONTEND_ORIGIN,
+  credentials: true,
+  methods: ['GET','POST','PUT','DELETE','OPTIONS']
+}));
+
+// SESSION
+app.use(session({
+  key: 'swiftx_session',
+  secret: process.env.SESSION_SECRET || 'supersecret',
+  store: sessionStore,
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    maxAge: 24 * 60 * 60 * 1000,
+    secure: process.env.NODE_ENV === 'production',         // true in production
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax' // none for cross-site in prod
+  }
+}));
 
 // Connection pool
 const pool = mysql.createPool(process.env.MYSQL_URL);
+
+
 
 
 
@@ -143,9 +175,6 @@ await pool.execute(`
     }
 }
 
-// Call at startup
-initializeDatabase();
-
 // Add this after your pool creation in server.js
 async function initializeDatabase() {
     try {
@@ -177,11 +206,8 @@ async function initializeDatabase() {
     }
 }
 
-// Call this function after your pool setup
+// Call at startup
 initializeDatabase();
-
-
-
 
 
 
@@ -276,6 +302,33 @@ function authRequired(req, res, next) {
     }
     next();
 }
+
+
+
+
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+
+if (process.env.NODE_ENV === 'production') {
+  app.set('trust proxy', 1);
+}
+
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'https://your-frontend-domain.netlify.app';
+
+app.use(helmet());
+app.use(cors({
+  origin: FRONTEND_ORIGIN,
+  credentials: true,
+  methods: ['GET','POST','PUT','DELETE','OPTIONS']
+}));
+
+const limiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 30, // limit requests per minute
+});
+app.use(limiter);
+
+
 
 
 
@@ -390,6 +443,39 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
+// Temporary admin registration endpoint (remove after creating admin)
+app.post('/api/register-admin', async (req, res) => {
+    const { firstName, lastName, username, email, password } = req.body;
+    
+    try {
+        // Check if admin already exists
+        const [existing] = await pool.execute("SELECT id FROM users WHERE email = ? OR role = 'admin'", [email]);
+        if (existing.length > 0) {
+            return res.json({ success: false, message: "Admin user already exists" });
+        }
+
+        const hash = await bcrypt.hash(password, 12);
+
+        // Create admin user directly (no email verification needed)
+        const [result] = await pool.execute(
+            "INSERT INTO users (first_name, last_name, username, email, password_hash, email_verified, status, role, failed_logins) VALUES (?, ?, ?, ?, ?, 1, 'active', 'admin', 0)",
+            [firstName, lastName, username, email, hash]
+        );
+
+        // Create admin profile and trading account
+        const userId = result.insertId;
+        await pool.execute("INSERT INTO user_profiles (user_id, account_type) VALUES (?, 'admin')", [userId]);
+        await pool.execute("INSERT INTO trading_accounts (user_id, account_number, account_type, balance, currency) VALUES (?, ?, 'admin', 100000, 'USD')", [userId, generateAccountNumber()]);
+
+        res.json({ success: true, message: "Admin user created successfully" });
+    } catch (err) {
+        console.error(err);
+        res.json({ success: false, message: "Admin registration failed" });
+    }
+});
+
+
+
 // Dashboard (protected)
 app.get('/api/dashboard', authRequired, async (req, res) => {
     try {
@@ -430,15 +516,6 @@ app.get('/api/dashboard', authRequired, async (req, res) => {
     }
 });
 
-// ================= Account Switching Routes ================= //
-
-// Get current account type
-app.get('/api/current-account-type', authRequired, async (req, res) => {
-    res.json({ 
-        success: true, 
-        accountType: req.session.accountType || 'demo' 
-    });
-});
 
 // ================= Account Switching Routes ================= //
 // Get current account type
@@ -702,6 +779,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

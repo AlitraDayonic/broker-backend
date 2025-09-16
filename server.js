@@ -34,7 +34,7 @@ if (process.env.NODE_ENV === 'production') {
   app.set('trust proxy', 1);
 }
 
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'https://your-frontend-domain.netlify.app';
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'https://swiftxchangepro.netlify.app';
 
 // app.use(helmet());
 app.use(cors({
@@ -441,7 +441,47 @@ app.post('/api/register-admin', async (req, res) => {
     }
 });
 
-
+// Admin login endpoint
+app.post('/api/admin-login', async (req, res) => {
+    const { email, password } = req.body;
+    
+    try {
+        const [rows] = await pool.execute("SELECT * FROM users WHERE email=? AND role='admin'", [email]);
+        if (rows.length === 0) {
+            return res.json({ success: false, message: "Invalid admin credentials" });
+        }
+        
+        const admin = rows[0];
+        const valid = await bcrypt.compare(password, admin.password_hash);
+        
+        if (!valid) {
+            await pool.execute("UPDATE users SET failed_logins = failed_logins + 1 WHERE id=?", [admin.id]);
+            return res.json({ success: false, message: "Invalid admin credentials" });
+        }
+        
+        // Set admin session
+        req.session.userId = admin.id;
+        req.session.userEmail = admin.email;
+        req.session.isAdmin = true;
+        
+        await pool.execute("UPDATE users SET failed_logins=0, last_login_at=NOW(), last_login_ip=? WHERE id=?", [req.ip, admin.id]);
+        
+        res.json({ 
+            success: true, 
+            message: "Admin login successful",
+            admin: {
+                id: admin.id,
+                email: admin.email,
+                firstName: admin.first_name,
+                lastName: admin.last_name,
+                role: admin.role
+            }
+        });
+    } catch (err) {
+        console.error('Admin login error:', err);
+        res.json({ success: false, message: "Admin login failed" });
+    }
+});
 
 // Dashboard (protected)
 app.get('/api/dashboard', authRequired, async (req, res) => {
@@ -746,6 +786,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

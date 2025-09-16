@@ -383,65 +383,92 @@ app.post('/api/verify-email', async (req, res) => {
 });
 
 
-// Login (enhanced to handle account type selection from frontend)
+// Login (debug version with detailed logging)
 app.post('/api/login', async (req, res) => {
-    const { email, password, accountType } = req.body; // Now also gets accountType from frontend
+    const { email, password, accountType } = req.body;
+    console.log('Login attempt:', { email, accountType }); // Don't log password
+    
     try {
+        console.log('1. Checking user exists...');
         const [rows] = await pool.execute("SELECT * FROM users WHERE email=?", [email]);
-        if (rows.length === 0) return res.json({ success: false, message: "Invalid email or password" });
+        if (rows.length === 0) {
+            console.log('User not found for email:', email);
+            return res.json({ success: false, message: "Invalid email or password" });
+        }
         
         const user = rows[0];
+        console.log('2. User found, checking password...');
+        
         const valid = await bcrypt.compare(password, user.password_hash);
         if (!valid) {
+            console.log('3. Password invalid for user:', user.id);
             await pool.execute("UPDATE users SET failed_logins = failed_logins + 1 WHERE id=?", [user.id]);
             return res.json({ success: false, message: "Invalid email or password" });
         }
 
+        console.log('3. Password valid, handling account type...');
+        
         // Determine which account type to use
         let finalAccountType = 'demo'; // Default fallback
         
         if (accountType && ['demo', 'live'].includes(accountType)) {
-            // User selected account type from login form - use that
+            console.log('4. Using account type from frontend:', accountType);
             finalAccountType = accountType;
             
-            // Update or create trading account record with selected type
-            const [existingAccount] = await pool.execute(
-                "SELECT id FROM trading_accounts WHERE user_id=?", 
-                [user.id]
-            );
-            
-            if (existingAccount.length > 0) {
-                // Update existing account type
-                await pool.execute(
-                    "UPDATE trading_accounts SET account_type=?, updated_at=NOW() WHERE user_id=?", 
-                    [finalAccountType, user.id]
+            // Check if trading_accounts table exists and user has record
+            try {
+                console.log('5. Checking existing trading account...');
+                const [existingAccount] = await pool.execute(
+                    "SELECT id FROM trading_accounts WHERE user_id=?", 
+                    [user.id]
                 );
-            } else {
-                // Create new trading account record
-                await pool.execute(
-                    "INSERT INTO trading_accounts (user_id, account_type, created_at, updated_at) VALUES (?, ?, NOW(), NOW())", 
-                    [user.id, finalAccountType]
-                );
+                
+                if (existingAccount.length > 0) {
+                    console.log('6. Updating existing account type...');
+                    await pool.execute(
+                        "UPDATE trading_accounts SET account_type=?, updated_at=NOW() WHERE user_id=?", 
+                        [finalAccountType, user.id]
+                    );
+                    console.log('6. Account type updated successfully');
+                } else {
+                    console.log('7. Creating new trading account record...');
+                    await pool.execute(
+                        "INSERT INTO trading_accounts (user_id, account_type, created_at, updated_at) VALUES (?, ?, NOW(), NOW())", 
+                        [user.id, finalAccountType]
+                    );
+                    console.log('7. New trading account created successfully');
+                }
+            } catch (accountError) {
+                console.error('ERROR in trading_accounts operation:', accountError);
+                // Don't fail login if trading_accounts operation fails
+                console.log('Continuing with login despite trading_accounts error...');
             }
         } else {
-            // No account type from frontend - check existing preference in database
-            const [accountRows] = await pool.execute(
-                "SELECT account_type FROM trading_accounts WHERE user_id=? ORDER BY id DESC LIMIT 1", 
-                [user.id]
-            );
-            
-            finalAccountType = accountRows.length > 0 ? accountRows[0].account_type : 'demo';
+            console.log('8. No account type from frontend, checking database...');
+            try {
+                const [accountRows] = await pool.execute(
+                    "SELECT account_type FROM trading_accounts WHERE user_id=? ORDER BY id DESC LIMIT 1", 
+                    [user.id]
+                );
+                
+                finalAccountType = accountRows.length > 0 ? accountRows[0].account_type : 'demo';
+                console.log('8. Using account type from database:', finalAccountType);
+            } catch (dbError) {
+                console.error('ERROR checking existing account type:', dbError);
+                console.log('Using default demo account type');
+            }
         }
         
+        console.log('9. Setting up session...');
         req.session.userId = user.id;
         req.session.userEmail = user.email;
-        req.session.accountType = finalAccountType; // Store selected account type in session
+        req.session.accountType = finalAccountType;
         
+        console.log('10. Updating user login info...');
         await pool.execute("UPDATE users SET failed_logins=0, last_login_at=NOW(), last_login_ip=? WHERE id=?", [req.ip, user.id]);
         
-        // Both demo and live users go to the same dashboard
-        // The dashboard will show different data based on session.accountType
-        const redirectUrl =  "/dashboard.html";r
+        console.log('11. Login successful, sending response...');
+        const redirectUrl = "/dashboard.html";
         
         res.json({ 
             success: true, 
@@ -455,13 +482,14 @@ app.post('/api/login', async (req, res) => {
                 accountType: finalAccountType
             }
         });
+        
     } catch (err) {
-        console.error('Login error:', err);
+        console.error('MAIN LOGIN ERROR:', err);
+        console.error('Error details:', err.message);
+        console.error('Error stack:', err.stack);
         res.json({ success: false, message: "Login failed" });
     }
 });
-
-
 
 // Temporary admin registration endpoint (remove after creating admin)
 app.post('/api/register-admin', async (req, res) => {
@@ -866,6 +894,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

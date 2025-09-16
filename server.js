@@ -441,7 +441,7 @@ app.post('/api/register-admin', async (req, res) => {
     }
 });
 
-// Admin login endpoint
+// Replace your /api/admin-login endpoint with this version:
 app.post('/api/admin-login', async (req, res) => {
     const { email, password } = req.body;
     
@@ -459,30 +459,45 @@ app.post('/api/admin-login', async (req, res) => {
             return res.json({ success: false, message: "Invalid admin credentials" });
         }
         
-        // Set admin session
+        // Set admin session data
         req.session.userId = admin.id;
         req.session.userEmail = admin.email;
         req.session.isAdmin = true;
+        req.session.role = 'admin';
+        
+        // Save session explicitly
+        req.session.save((saveErr) => {
+            if (saveErr) {
+                console.error('Session save error:', saveErr);
+                return res.json({ success: false, message: "Session creation failed" });
+            }
+            
+            console.log('Admin session created successfully:', {
+                sessionId: req.sessionID,
+                userId: admin.id,
+                email: admin.email
+            });
+            
+            res.json({ 
+                success: true, 
+                message: "Admin login successful",
+                admin: {
+                    id: admin.id,
+                    email: admin.email,
+                    firstName: admin.first_name,
+                    lastName: admin.last_name,
+                    role: admin.role
+                }
+            });
+        });
         
         await pool.execute("UPDATE users SET failed_logins=0, last_login_at=NOW(), last_login_ip=? WHERE id=?", [req.ip, admin.id]);
         
-        res.json({ 
-            success: true, 
-            message: "Admin login successful",
-            admin: {
-                id: admin.id,
-                email: admin.email,
-                firstName: admin.first_name,
-                lastName: admin.last_name,
-                role: admin.role
-            }
-        });
     } catch (err) {
         console.error('Admin login error:', err);
         res.json({ success: false, message: "Admin login failed" });
     }
 });
-
 // Dashboard (protected)
 app.get('/api/dashboard', authRequired, async (req, res) => {
     try {
@@ -659,6 +674,25 @@ app.get('/api/verify-admin-access', async (req, res) => {
 });
 
 
+// ADD THE DEBUG ENDPOINT HERE:
+app.get('/api/debug-admin-session', (req, res) => {
+    console.log('Session ID:', req.sessionID);
+    console.log('Session data:', req.session);
+    console.log('User ID from session:', req.session.userId);
+    console.log('Is Admin from session:', req.session.isAdmin);
+    
+    res.json({
+        sessionExists: !!req.session,
+        sessionId: req.sessionID,
+        userId: req.session.userId || null,
+        userEmail: req.session.userEmail || null,
+        isAdmin: req.session.isAdmin || false,
+        fullSession: req.session
+    });
+});
+
+
+
 // ================= Transaction History Routes ================= //
 
 // 1. Trades History
@@ -789,6 +823,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

@@ -589,52 +589,81 @@ app.get('/api/dashboard', authRequired, async (req, res) => {
 
 
 // ================= Account Switching Routes ================= //
-// Get current account type
-app.get('/api/current-account-type', authRequired, async (req, res) => {
-    res.json({ 
-        success: true, 
-        accountType: req.session.accountType || 'demo' 
-    });
+// Get user's current account type from database
+      app.get('/api/current-account-type', authenticateUser, async (req, res) => {
+    try {
+        const userId = req.user.id; // From your authentication middleware
+        
+        // Get user's current account type from database
+        const user = await User.findById(userId); // Adjust based on your DB setup
+        
+        res.json({
+            success: true,
+            accountType: user.accountType || 'demo'
+        });
+        
+    } catch (error) {
+        console.error('Error getting account type:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to load account type'
+        });
+    }
 });
+
 
 // Switch account type
-app.post('/api/switch-account-type', authRequired, async (req, res) => {
-    const { accountType } = req.body;
-    
-    if (!['demo', 'live'].includes(accountType)) {
-        return res.json({ success: false, message: 'Invalid account type' });
-    }
-    
+Switch account type
+app.post('/api/switch-account-type', authenticateUser, async (req, res) => {
     try {
-        // Update session
-        req.session.accountType = accountType;
+        const { accountType } = req.body;
+        const userId = req.user.id;
         
-        // Ensure the account exists in trading_accounts
-        const [rows] = await pool.execute(
-            "SELECT id FROM trading_accounts WHERE user_id=? AND account_type=?",
-            [req.session.userId, accountType]
-        );
-        
-        if (rows.length === 0) {
-            // Create account if missing
-            const startingBalance = accountType === 'live' ? 0 : 10000;
-            await pool.execute(
-                "INSERT INTO trading_accounts (user_id, account_number, account_type, balance, currency) VALUES (?, ?, ?, ?, 'USD')",
-                [req.session.userId, 'SXR' + Date.now(), accountType, startingBalance]
-            );
+        // Validate account type
+        if (!['demo', 'live'].includes(accountType)) {
+            return res.json({
+                success: false,
+                message: 'Invalid account type'
+            });
         }
         
-        res.json({ 
-            success: true, 
-            message: `Switched to ${accountType} account`,
-            accountType 
+        // Update in database
+        await User.findByIdAndUpdate(userId, { 
+            accountType: accountType,
+            updatedAt: new Date()
         });
+        
+        res.json({
+            success: true,
+            message: Successfully switched to ${accountType} account,
+            accountType: accountType
+        });
+        
     } catch (error) {
-        console.error('Account switch error:', error);
-        res.json({ success: false, message: 'Failed to switch account' });
+        console.error('Error switching account type:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to switch account type'
+        });
     }
 });
 
+// Authentication middleware (if you don't have one)
+function authenticateUser(req, res, next) {
+    // This should check if user is logged in
+    // Could be session-based, JWT-based, etc.
+    
+    // Example for session-based:
+    if (req.session && req.session.user) {
+        req.user = req.session.user;
+        next();
+    } else {
+        res.status(401).json({
+            success: false,
+            message: 'Authentication required'
+        });
+    }
+}
 
 // Trade endpoint (add this to your server.js)
 app.post('/api/trade', authRequired, async (req, res) => {
@@ -872,6 +901,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

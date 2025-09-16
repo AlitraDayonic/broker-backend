@@ -50,20 +50,6 @@ app.use(cors({
 // app.use(limiter);
 
 
-// SESSION
-app.use(session({
-  key: 'swiftx_session',
-  secret: process.env.SESSION_SECRET || 'supersecret',
-  store: sessionStore,
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    maxAge: 24 * 60 * 60 * 1000,
-    secure: process.env.NODE_ENV === 'production',         // true in production
-    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax' // none for cross-site in prod
-  }
-}));
-
 // Connection pool
 const pool = mysql.createPool(process.env.MYSQL_URL);
 
@@ -760,6 +746,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

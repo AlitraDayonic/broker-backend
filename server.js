@@ -43,11 +43,11 @@ app.use(cors({
   methods: ['GET','POST','PUT','DELETE','OPTIONS']
 }));
 
-const limiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 30, // limit requests per minute
-});
-app.use(limiter);
+// const limiter = rateLimit({
+ // windowMs: 60 * 1000, // 1 minute
+ // max: 30, // limit requests per minute
+// });
+// app.use(limiter);
 
 
 // SESSION
@@ -760,6 +760,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

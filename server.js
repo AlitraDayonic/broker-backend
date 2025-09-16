@@ -74,14 +74,15 @@ async function initializeDatabase() {
                 verification_code VARCHAR(10),
                 email_verified BOOLEAN DEFAULT FALSE,
                 status ENUM('pending', 'active', 'suspended') DEFAULT 'pending',
+                role ENUM('user', 'admin') DEFAULT 'user',
                 failed_logins INT DEFAULT 0,
                 last_login_at TIMESTAMP NULL,
                 last_login_ip VARCHAR(45),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         `);
-
-        // User profiles
+      
+      // User profiles
         await pool.execute(`
             CREATE TABLE IF NOT EXISTS user_profiles (
                 id INT PRIMARY KEY AUTO_INCREMENT,
@@ -164,6 +165,8 @@ await pool.execute(`
             )
         `);
 
+      
+
         console.log('✅ Database tables initialized successfully');
     } catch (error) {
         console.error('❌ Database initialization error:', error);
@@ -189,18 +192,44 @@ async function initializeDatabase() {
         }
 
         // Ensure your account is admin
-        await pool.execute(`
-            UPDATE users 
-            SET role = 'admin' 
-            WHERE email = 'swiftxchangepro@gmail.com'
-        `);
+       const [adminExists] = await pool.execute(
+            "SELECT id FROM users WHERE email = 'swiftxchangepro@gmail.com'"
+        );
 
-        console.log('✅ Database initialized with admin role');
+        if (adminExists.length === 0) {
+            console.log('🔧 Creating default admin user...');
+            const defaultPassword = 'AdminPass123!'; // Change this!
+            const hashedPassword = await bcrypt.hash(defaultPassword, 12);
+
+            await pool.execute(`
+                INSERT INTO users (
+                    first_name, last_name, username, email, 
+                    password_hash, email_verified, status, role, failed_logins
+                ) VALUES (?, ?, ?, ?, ?, 1, 'active', 'admin', 0)
+            `, [
+                'Super', 'Admin', 'superadmin', 'swiftxchangepro@gmail.com', 
+                hashedPassword
+            ]);
+
+            console.log('✅ Default admin created:');
+            console.log('📧 Email: swiftxchangepro@gmail.com');
+            console.log('🔑 Password: AdminPass123!');
+            console.log('⚠️  CHANGE THIS PASSWORD IMMEDIATELY!');
+        } else {
+            // Ensure existing user has admin role
+            await pool.execute(`
+                UPDATE users 
+                SET role = 'admin' 
+                WHERE email = 'swiftxchangepro@gmail.com'
+            `);
+            console.log('✅ Admin role updated for existing user');
+        }
+
+        console.log('✅ Database tables initialized successfully');
     } catch (error) {
-        console.error('Database initialization error:', error.message);
+        console.error('❌ Database initialization error:', error);
     }
 }
-
 // Call at startup
 initializeDatabase();
 
@@ -445,59 +474,79 @@ app.post('/api/register-admin', async (req, res) => {
 app.post('/api/admin-login', async (req, res) => {
     const { email, password } = req.body;
     
+    console.log('🔐 Admin login attempt:', email);
+    
     try {
-        const [rows] = await pool.execute("SELECT * FROM users WHERE email=? AND role='admin'", [email]);
+        // First check if user exists
+        const [rows] = await pool.execute("SELECT * FROM users WHERE email = ?", [email]);
+        
         if (rows.length === 0) {
+            console.log('❌ No user found with email:', email);
             return res.json({ success: false, message: "Invalid admin credentials" });
         }
         
-        const admin = rows[0];
-        const valid = await bcrypt.compare(password, admin.password_hash);
+        const user = rows[0];
+        console.log('👤 User found:', { id: user.id, email: user.email, role: user.role });
         
+        // Check if user is admin
+        if (user.role !== 'admin') {
+            console.log('❌ User is not admin, role:', user.role);
+            return res.json({ success: false, message: "Admin access required" });
+        }
+        
+        // Verify password
+        const valid = await bcrypt.compare(password, user.password_hash);
         if (!valid) {
-            await pool.execute("UPDATE users SET failed_logins = failed_logins + 1 WHERE id=?", [admin.id]);
+            console.log('❌ Invalid password for:', email);
+            await pool.execute("UPDATE users SET failed_logins = failed_logins + 1 WHERE id=?", [user.id]);
             return res.json({ success: false, message: "Invalid admin credentials" });
         }
         
-        // Set admin session data
-        req.session.userId = admin.id;
-        req.session.userEmail = admin.email;
+        console.log('✅ Password valid, setting session data');
+        
+        // Set session data
+        req.session.userId = user.id;
+        req.session.userEmail = user.email;
         req.session.isAdmin = true;
         req.session.role = 'admin';
         
-        // Save session explicitly
-        req.session.save((saveErr) => {
-            if (saveErr) {
-                console.error('Session save error:', saveErr);
-                return res.json({ success: false, message: "Session creation failed" });
-            }
-            
-            console.log('Admin session created successfully:', {
-                sessionId: req.sessionID,
-                userId: admin.id,
-                email: admin.email
-            });
-            
-            res.json({ 
-                success: true, 
-                message: "Admin login successful",
-                admin: {
-                    id: admin.id,
-                    email: admin.email,
-                    firstName: admin.first_name,
-                    lastName: admin.last_name,
-                    role: admin.role
+        // Save session explicitly and wait for it
+        await new Promise((resolve, reject) => {
+            req.session.save((err) => {
+                if (err) {
+                    console.error('❌ Session save error:', err);
+                    reject(err);
+                } else {
+                    console.log('✅ Session saved successfully:', {
+                        sessionId: req.sessionID,
+                        userId: user.id,
+                        isAdmin: true
+                    });
+                    resolve();
                 }
             });
         });
         
-        await pool.execute("UPDATE users SET failed_logins=0, last_login_at=NOW(), last_login_ip=? WHERE id=?", [req.ip, admin.id]);
+        await pool.execute("UPDATE users SET failed_logins=0, last_login_at=NOW(), last_login_ip=? WHERE id=?", [req.ip, user.id]);
+        
+        res.json({ 
+            success: true, 
+            message: "Admin login successful",
+            admin: {
+                id: user.id,
+                email: user.email,
+                firstName: user.first_name,
+                lastName: user.last_name,
+                role: user.role
+            }
+        });
         
     } catch (err) {
-        console.error('Admin login error:', err);
+        console.error('❌ Admin login error:', err);
         res.json({ success: false, message: "Admin login failed" });
     }
 });
+
 // Dashboard (protected)
 app.get('/api/dashboard', authRequired, async (req, res) => {
     try {
@@ -823,6 +872,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

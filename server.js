@@ -441,7 +441,7 @@ app.post('/api/login', async (req, res) => {
         
         // Both demo and live users go to the same dashboard
         // The dashboard will show different data based on session.accountType
-        const redirectUrl = "/market.html"; // or "/dashboard.html" - whatever you prefer
+        const redirectUrl =  "/dashboard.html";r
         
         res.json({ 
             success: true, 
@@ -460,6 +460,9 @@ app.post('/api/login', async (req, res) => {
         res.json({ success: false, message: "Login failed" });
     }
 });
+
+
+
 // Temporary admin registration endpoint (remove after creating admin)
 app.post('/api/register-admin', async (req, res) => {
     const { firstName, lastName, username, email, password } = req.body;
@@ -863,6 +866,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

@@ -383,10 +383,9 @@ app.post('/api/verify-email', async (req, res) => {
 });
 
 
-// Login (without email verification check)
-// Enhanced Login with account type detection
+// Login (enhanced to handle account type selection from frontend)
 app.post('/api/login', async (req, res) => {
-    const { email, password } = req.body;
+    const { email, password, accountType } = req.body; // Now also gets accountType from frontend
     try {
         const [rows] = await pool.execute("SELECT * FROM users WHERE email=?", [email]);
         if (rows.length === 0) return res.json({ success: false, message: "Invalid email or password" });
@@ -398,47 +397,69 @@ app.post('/api/login', async (req, res) => {
             return res.json({ success: false, message: "Invalid email or password" });
         }
 
-        // Get user's trading account info to determine account type
-        const [accountRows] = await pool.execute(
-            "SELECT account_type FROM trading_accounts WHERE user_id=? ORDER BY id DESC LIMIT 1", 
-            [user.id]
-        );
+        // Determine which account type to use
+        let finalAccountType = 'demo'; // Default fallback
         
-        const accountType = accountRows.length > 0 ? accountRows[0].account_type : 'demo';
+        if (accountType && ['demo', 'live'].includes(accountType)) {
+            // User selected account type from login form - use that
+            finalAccountType = accountType;
+            
+            // Update or create trading account record with selected type
+            const [existingAccount] = await pool.execute(
+                "SELECT id FROM trading_accounts WHERE user_id=?", 
+                [user.id]
+            );
+            
+            if (existingAccount.length > 0) {
+                // Update existing account type
+                await pool.execute(
+                    "UPDATE trading_accounts SET account_type=?, updated_at=NOW() WHERE user_id=?", 
+                    [finalAccountType, user.id]
+                );
+            } else {
+                // Create new trading account record
+                await pool.execute(
+                    "INSERT INTO trading_accounts (user_id, account_type, created_at, updated_at) VALUES (?, ?, NOW(), NOW())", 
+                    [user.id, finalAccountType]
+                );
+            }
+        } else {
+            // No account type from frontend - check existing preference in database
+            const [accountRows] = await pool.execute(
+                "SELECT account_type FROM trading_accounts WHERE user_id=? ORDER BY id DESC LIMIT 1", 
+                [user.id]
+            );
+            
+            finalAccountType = accountRows.length > 0 ? accountRows[0].account_type : 'demo';
+        }
         
         req.session.userId = user.id;
         req.session.userEmail = user.email;
-        req.session.accountType = accountType; // Store account type in session
+        req.session.accountType = finalAccountType; // Store selected account type in session
         
         await pool.execute("UPDATE users SET failed_logins=0, last_login_at=NOW(), last_login_ip=? WHERE id=?", [req.ip, user.id]);
         
-        // Determine redirect based on account type
-        let redirectUrl = "/dashboard.html"; // Default to dashboard
-        
-        if (accountType === 'live') {
-            redirectUrl = "/dashboard.html"; // Live users go to dashboard
-        } else {
-            redirectUrl = "/dashboard.html"; // Demo users also go to dashboard
-        }
+        // Both demo and live users go to the same dashboard
+        // The dashboard will show different data based on session.accountType
+        const redirectUrl = "/market.html"; // or "/dashboard.html" - whatever you prefer
         
         res.json({ 
             success: true, 
-            message: "Login successful", 
+            message: `Login successful with ${finalAccountType} account`, 
             redirectUrl: redirectUrl,
             user: {
                 id: user.id,
                 email: user.email,
                 firstName: user.first_name,
                 lastName: user.last_name,
-                accountType: accountType
+                accountType: finalAccountType
             }
         });
     } catch (err) {
-        console.error(err);
+        console.error('Login error:', err);
         res.json({ success: false, message: "Login failed" });
     }
 });
-
 // Temporary admin registration endpoint (remove after creating admin)
 app.post('/api/register-admin', async (req, res) => {
     const { firstName, lastName, username, email, password } = req.body;
@@ -588,65 +609,6 @@ app.get('/api/dashboard', authRequired, async (req, res) => {
 });
 
 
-// ================= Account Switching Routes ================= //
-// Get user's current account type from database
-      app.get('/api/current-account-type', authenticateUser, async (req, res) => {
-    try {
-        const userId = req.user.id; // From your authentication middleware
-        
-        // Get user's current account type from database
-        const user = await User.findById(userId); // Adjust based on your DB setup
-        
-        res.json({
-            success: true,
-            accountType: user.accountType || 'demo'
-        });
-        
-    } catch (error) {
-        console.error('Error getting account type:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to load account type'
-        });
-    }
-});
-
-
-// Switch account type
-Switch account type
-app.post('/api/switch-account-type', authenticateUser, async (req, res) => {
-    try {
-        const { accountType } = req.body;
-        const userId = req.user.id;
-        
-        // Validate account type
-        if (!['demo', 'live'].includes(accountType)) {
-            return res.json({
-                success: false,
-                message: 'Invalid account type'
-            });
-        }
-        
-        // Update in database
-        await User.findByIdAndUpdate(userId, { 
-            accountType: accountType,
-            updatedAt: new Date()
-        });
-        
-        res.json({
-            success: true,
-            message: Successfully switched to ${accountType} account,
-            accountType: accountType
-        });
-        
-    } catch (error) {
-        console.error('Error switching account type:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to switch account type'
-        });
-    }
-});
 
 // Authentication middleware (if you don't have one)
 function authenticateUser(req, res, next) {
@@ -901,6 +863,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

@@ -275,7 +275,7 @@ class AdminDashboard {
   }
 
     
-// Replace the loadUsers function
+// Replace the loadUsers function in admin-dashboard.js
 async loadUsers() {
     const usersTbody = document.getElementById('admin-users-tbody');
     const usersTotal = document.getElementById('usersTotal');
@@ -312,9 +312,9 @@ async loadUsers() {
                     </div>
                 </td>
                 <td>${user.email}</td>
-                <td><span class="status-badge ${user.status || 'active'}">${user.status || 'Active'}</span></td>
-                <td class="data-value currency">${(user.balance || 0).toFixed(2)}</td>
-                <td class="data-value currency">0.00</td>
+                <td><span class="status-badge ${user.status}">${user.status}</span></td>
+                <td class="data-value currency">$0.00</td>
+                <td class="data-value currency">$0.00</td>
                 <td>${user.last_login_at ? new Date(user.last_login_at).toLocaleDateString() : 'Never'}</td>
                 <td>
                     <div class="action-buttons-group">
@@ -351,8 +351,9 @@ async loadUsers() {
         this.showToast('error', 'Error', 'Failed to load users');
     }
 }
-
-// Update the filterUsers function to work with user objects
+    
+    
+    // Update the filterUsers function to work with user objects
 filterUsers(users) {
     let filtered = [...users];
     

@@ -718,33 +718,25 @@ app.post('/api/logout', (req, res) => {
 });
 
 // Replace your existing verify-admin-access endpoint with this:
-app.get('/api/verify-admin-access', async (req, res) => {
-    try {
-        if (!req.session.userId) {
-            return res.json({ success: false, message: "Not logged in" });
-        }
-
-        const [rows] = await pool.execute(
-            "SELECT role FROM users WHERE id = ?", 
-            [req.session.userId]
-        );
-
-        if (rows.length === 0 || rows[0].role !== 'admin') {
-            return res.json({ success: false, message: "Admin access required" });
-        }
-
-        res.json({ 
-            success: true, 
-            message: "Admin access verified",
-            isAdmin: true 
-        });
-    } catch (error) {
-        console.error('Admin verification error:', error);
-        res.json({ success: false, message: "Verification failed" });
+app.get('/api/verify-admin-access', (req, res) => {
+    console.log('🔐 Verifying admin access for session:', req.sessionID);
+    console.log('📋 Session data:', req.session);
+    
+    if (!req.session.userId || !req.session.isAdmin) {
+        console.log('❌ Admin access denied');
+        return res.json({ success: false, message: "Admin access required" });
     }
+    
+    console.log('✅ Admin access verified');
+    res.json({ 
+        success: true, 
+        admin: {
+            id: req.session.userId,
+            email: req.session.userEmail,
+            role: req.session.role
+        }
+    });
 });
-
-
 // ADD THE DEBUG ENDPOINT HERE:
 app.get('/api/debug-admin-session', (req, res) => {
     console.log('Session ID:', req.sessionID);
@@ -894,6 +886,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

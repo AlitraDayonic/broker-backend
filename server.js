@@ -861,20 +861,27 @@ app.get('/api/admin/users', authRequired, async (req, res) => {
             return res.json({ success: false, message: "Admin access required" });
         }
 
+        console.log('🔍 Fetching users from database...');
+
+        // Updated query to match your actual table structure
         const [users] = await pool.execute(`
-            SELECT id, email, first_name, last_name, role, 
-                   balance, created_at, last_login_at, status
-            FROM users 
-            ORDER BY created_at DESC
+            SELECT u.id, u.email, u.first_name, u.last_name, u.username, u.phone, 
+                   u.country, u.status, u.role, u.email_verified, u.created_at, 
+                   u.last_login_at, up.account_type
+            FROM users u
+            LEFT JOIN user_profiles up ON u.id = up.user_id
+            ORDER BY u.created_at DESC
         `);
+
+        console.log('✅ Found users:', users.length);
 
         res.json({ 
             success: true, 
             users: users 
         });
     } catch (error) {
-        console.error('Error fetching users:', error);
-        res.json({ success: false, message: "Failed to fetch users" });
+        console.error('❌ Database error fetching users:', error);
+        res.json({ success: false, message: `Database error: ${error.message}` });
     }
 });
 
@@ -888,18 +895,16 @@ app.get('/api/admin/dashboard-stats', authRequired, async (req, res) => {
         // Get total users
         const [userCount] = await pool.execute('SELECT COUNT(*) as count FROM users');
         
-        // Get total balance
-        const [balanceSum] = await pool.execute('SELECT SUM(balance) as total FROM users');
-        
-        // You can add more stats here (trades, deposits, etc.)
+        // Since you don't have balance in users table, we'll set it to 0 for now
+        // You can update this later when you show me where balances are stored
         
         res.json({ 
             success: true, 
             stats: {
                 totalUsers: userCount[0].count,
-                totalBalance: balanceSum[0].total || 0,
-                totalTrades: 0, // Add when you have trades table
-                pendingActions: 0 // Add when you have pending actions
+                totalBalance: 0, // Update this when you tell me where balances are stored
+                totalTrades: 0, 
+                pendingActions: 0 
             }
         });
     } catch (error) {
@@ -969,6 +974,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

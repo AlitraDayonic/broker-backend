@@ -851,6 +851,85 @@ app.get('/api/profile', authRequired, async (req, res) => {
     }
 });
 
+
+
+// Admin endpoint to get all users
+app.get('/api/admin/users', authRequired, async (req, res) => {
+    try {
+        // Check if user is admin
+        if (!req.session.isAdmin) {
+            return res.json({ success: false, message: "Admin access required" });
+        }
+
+        const [users] = await pool.execute(`
+            SELECT id, email, first_name, last_name, role, 
+                   balance, created_at, last_login_at, status
+            FROM users 
+            ORDER BY created_at DESC
+        `);
+
+        res.json({ 
+            success: true, 
+            users: users 
+        });
+    } catch (error) {
+        console.error('Error fetching users:', error);
+        res.json({ success: false, message: "Failed to fetch users" });
+    }
+});
+
+// Admin endpoint to get dashboard stats
+app.get('/api/admin/dashboard-stats', authRequired, async (req, res) => {
+    try {
+        if (!req.session.isAdmin) {
+            return res.json({ success: false, message: "Admin access required" });
+        }
+
+        // Get total users
+        const [userCount] = await pool.execute('SELECT COUNT(*) as count FROM users');
+        
+        // Get total balance
+        const [balanceSum] = await pool.execute('SELECT SUM(balance) as total FROM users');
+        
+        // You can add more stats here (trades, deposits, etc.)
+        
+        res.json({ 
+            success: true, 
+            stats: {
+                totalUsers: userCount[0].count,
+                totalBalance: balanceSum[0].total || 0,
+                totalTrades: 0, // Add when you have trades table
+                pendingActions: 0 // Add when you have pending actions
+            }
+        });
+    } catch (error) {
+        console.error('Error fetching dashboard stats:', error);
+        res.json({ success: false, message: "Failed to fetch stats" });
+    }
+});
+
+// Admin endpoint to update user balance
+app.post('/api/admin/update-balance', authRequired, async (req, res) => {
+    try {
+        if (!req.session.isAdmin) {
+            return res.json({ success: false, message: "Admin access required" });
+        }
+
+        const { userId, amount, action } = req.body; // action: 'credit' or 'debit'
+        
+        if (action === 'credit') {
+            await pool.execute('UPDATE users SET balance = balance + ? WHERE id = ?', [amount, userId]);
+        } else if (action === 'debit') {
+            await pool.execute('UPDATE users SET balance = balance - ? WHERE id = ?', [amount, userId]);
+        }
+
+        res.json({ success: true, message: `Successfully ${action}ed $${amount}` });
+    } catch (error) {
+        console.error('Error updating balance:', error);
+        res.json({ success: false, message: "Failed to update balance" });
+    }
+});
+
 // Update user profile  
 app.put('/api/profile', authRequired, async (req, res) => {
     const { firstName, lastName, email, phone, country } = req.body;
@@ -890,6 +969,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

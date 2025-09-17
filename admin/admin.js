@@ -201,33 +201,26 @@ class AdminDashboard {
     }
   }
 
-  async loadSummaryStats() {
-    // For now, using localStorage data until server provides admin endpoints
-    // You can replace this with actual API calls to your server
-    
-    const emails = this.getAllUserEmails();
-    const totalUsers = emails.length;
-    
-    let totalBalance = 0;
-    let totalTrades = 0;
-    let pendingActions = 0;
-    
-    emails.forEach(email => {
-      const balance = parseFloat(localStorage.getItem(`balance_${email}`)) || 0;
-      totalBalance += balance;
-    });
+ async loadSummaryStats() {
+    try {
+        const result = await this.apiCall('/api/admin/dashboard-stats');
+        
+        if (result.success) {
+            const stats = result.stats;
+            
+            // Update dashboard cards with real data
+            document.getElementById('admin-total-users').textContent = stats.totalUsers;
+            document.getElementById('admin-total-balance').textContent = `$${stats.totalBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+            document.getElementById('admin-total-trades').textContent = stats.totalTrades;
+            document.getElementById('admin-pending-actions').textContent = stats.pendingActions;
+        }
+    } catch (error) {
+        console.error('Error loading summary stats:', error);
+        this.showToast('error', 'Error', 'Failed to load dashboard statistics');
+    }
+}
 
-    // Update dashboard cards
-    document.getElementById('admin-total-users').textContent = totalUsers;
-    document.getElementById('admin-total-balance').textContent = `$${totalBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
-    document.getElementById('admin-total-trades').textContent = totalTrades;
-    document.getElementById('admin-pending-actions').textContent = pendingActions;
-
-    // Update quick action counts
-    document.getElementById('pendingDepositsCount').textContent = '0 pending';
-    document.getElementById('pendingWithdrawalsCount').textContent = '0 pending';
-  }
-
+    
   async loadRecentActivity() {
     const activityList = document.getElementById('activityList');
     
@@ -281,98 +274,105 @@ class AdminDashboard {
     document.getElementById('withdrawalsBadge').textContent = '0';
   }
 
-  // User Management
-  async loadUsers() {
+    
+// Replace the loadUsers function
+async loadUsers() {
     const usersTbody = document.getElementById('admin-users-tbody');
     const usersTotal = document.getElementById('usersTotal');
     const usersShowing = document.getElementById('usersShowing');
 
     if (!usersTbody) return;
 
-    const emails = this.getAllUserEmails();
-    const filteredUsers = this.filterUsers(emails);
-    const paginatedUsers = this.paginateData(filteredUsers);
+    try {
+        const result = await this.apiCall('/api/admin/users');
+        
+        if (!result.success) {
+            this.showToast('error', 'Error', result.message);
+            return;
+        }
 
-    usersTbody.innerHTML = '';
+        const users = result.users;
+        const filteredUsers = this.filterUsers(users);
+        const paginatedUsers = this.paginateData(filteredUsers);
 
-    paginatedUsers.forEach((email, index) => {
-      const balance = parseFloat(localStorage.getItem(`balance_${email}`)) || 0;
-      const portfolio = JSON.parse(localStorage.getItem("portfolio")) || [];
-      const userPortfolio = portfolio.filter(p => p.owner === email);
-      
-      // Calculate portfolio value
-      let portfolioValue = 0;
-      userPortfolio.forEach(asset => {
-        portfolioValue += (asset.quantity || 0) * (asset.price || 0);
-      });
+        usersTbody.innerHTML = '';
 
-      const row = document.createElement("tr");
-      row.innerHTML = `
-        <td><input type="checkbox" data-user="${email}" class="user-checkbox"></td>
-        <td>#${index + 1}</td>
-        <td>
-          <div class="user-info">
-            <img src="https://ui-avatars.com/api/?name=${encodeURIComponent(email)}&background=00c9a7&color=fff" alt="${email}" class="user-avatar">
-            <div>
-              <div class="user-name">${email.split('@')[0]}</div>
-              <div class="user-email">${email}</div>
-            </div>
-          </div>
-        </td>
-        <td>${email}</td>
-        <td><span class="status-badge active">Active</span></td>
-        <td class="data-value currency">${balance.toFixed(2)}</td>
-        <td class="data-value currency">${portfolioValue.toFixed(2)}</td>
-        <td>Just now</td>
-        <td>
-          <div class="action-buttons-group">
-            <button class="action-btn-sm view" onclick="adminDashboard.viewUser('${email}')" title="View Details">
-              <i class="fas fa-eye"></i>
-            </button>
-            <button class="action-btn-sm edit" onclick="adminDashboard.editUser('${email}')" title="Edit User">
-              <i class="fas fa-edit"></i>
-            </button>
-            <button class="action-btn-sm approve" onclick="adminDashboard.creditUser('${email}')" title="Credit">
-              <i class="fas fa-plus"></i>
-            </button>
-            <button class="action-btn-sm reject" onclick="adminDashboard.debitUser('${email}')" title="Debit">
-              <i class="fas fa-minus"></i>
-            </button>
-            <button class="action-btn-sm delete" onclick="adminDashboard.deleteUser('${email}')" title="Delete">
-              <i class="fas fa-trash"></i>
-            </button>
-          </div>
-        </td>
-      `;
+        paginatedUsers.forEach((user, index) => {
+            const row = document.createElement("tr");
+            row.innerHTML = `
+                <td><input type="checkbox" data-user="${user.id}" class="user-checkbox"></td>
+                <td>#${user.id}</td>
+                <td>
+                    <div class="user-info">
+                        <img src="https://ui-avatars.com/api/?name=${encodeURIComponent(user.email)}&background=00c9a7&color=fff" alt="${user.email}" class="user-avatar">
+                        <div>
+                            <div class="user-name">${user.first_name || 'N/A'} ${user.last_name || ''}</div>
+                            <div class="user-email">${user.email}</div>
+                        </div>
+                    </div>
+                </td>
+                <td>${user.email}</td>
+                <td><span class="status-badge ${user.status || 'active'}">${user.status || 'Active'}</span></td>
+                <td class="data-value currency">${(user.balance || 0).toFixed(2)}</td>
+                <td class="data-value currency">0.00</td>
+                <td>${user.last_login_at ? new Date(user.last_login_at).toLocaleDateString() : 'Never'}</td>
+                <td>
+                    <div class="action-buttons-group">
+                        <button class="action-btn-sm view" onclick="adminDashboard.viewUser(${user.id})" title="View Details">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                        <button class="action-btn-sm edit" onclick="adminDashboard.editUser(${user.id})" title="Edit User">
+                            <i class="fas fa-edit"></i>
+                        </button>
+                        <button class="action-btn-sm approve" onclick="adminDashboard.creditUser(${user.id})" title="Credit">
+                            <i class="fas fa-plus"></i>
+                        </button>
+                        <button class="action-btn-sm reject" onclick="adminDashboard.debitUser(${user.id})" title="Debit">
+                            <i class="fas fa-minus"></i>
+                        </button>
+                        <button class="action-btn-sm delete" onclick="adminDashboard.deleteUser(${user.id})" title="Delete">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </td>
+            `;
 
-      usersTbody.appendChild(row);
-    });
+            usersTbody.appendChild(row);
+        });
 
-    // Update pagination info
-    if (usersTotal) usersTotal.textContent = filteredUsers.length;
-    if (usersShowing) usersShowing.textContent = paginatedUsers.length;
-    
-    this.updatePagination('users', filteredUsers.length);
-  }
+        // Update pagination info
+        if (usersTotal) usersTotal.textContent = filteredUsers.length;
+        if (usersShowing) usersShowing.textContent = paginatedUsers.length;
+        
+        this.updatePagination('users', filteredUsers.length);
+        
+    } catch (error) {
+        console.error('Error loading users:', error);
+        this.showToast('error', 'Error', 'Failed to load users');
+    }
+}
 
-  filterUsers(users) {
+// Update the filterUsers function to work with user objects
+filterUsers(users) {
     let filtered = [...users];
     
     // Apply search filter
     if (this.searchQuery) {
-      filtered = filtered.filter(email => 
-        email.toLowerCase().includes(this.searchQuery.toLowerCase())
-      );
+        filtered = filtered.filter(user => 
+            user.email.toLowerCase().includes(this.searchQuery.toLowerCase()) ||
+            (user.first_name && user.first_name.toLowerCase().includes(this.searchQuery.toLowerCase())) ||
+            (user.last_name && user.last_name.toLowerCase().includes(this.searchQuery.toLowerCase()))
+        );
     }
 
     // Apply status filter
     const statusFilter = document.getElementById('userStatusFilter')?.value;
     if (statusFilter && statusFilter !== 'all') {
-      // Filter by status when you have user status data
+        filtered = filtered.filter(user => user.status === statusFilter);
     }
 
     return filtered;
-  }
+}
 
   paginateData(data) {
     const startIndex = (this.currentPage - 1) * this.itemsPerPage;
@@ -495,34 +495,46 @@ class AdminDashboard {
     this.showModal('userModal');
   }
 
-  async creditUser(email) {
-    const amount = parseFloat(prompt(`Credit amount for ${email}:`));
-    if (!amount || amount <= 0) return;
+ // Add credit/debit functions
+async creditUser(userId) {
+    const amount = prompt('Enter amount to credit:');
+    if (!amount || isNaN(amount)) return;
     
-    const key = `balance_${email}`;
-    const current = parseFloat(localStorage.getItem(key)) || 0;
-    localStorage.setItem(key, (current + amount).toFixed(2));
-    
-    this.showToast('success', 'Success', `Credited $${amount.toFixed(2)} to ${email}`);
-    await this.loadSectionData(this.currentSection);
-  }
-
-  async debitUser(email) {
-    const amount = parseFloat(prompt(`Debit amount for ${email}:`));
-    if (!amount || amount <= 0) return;
-    
-    const key = `balance_${email}`;
-    const current = parseFloat(localStorage.getItem(key)) || 0;
-    if (amount > current) {
-      this.showToast('error', 'Error', 'Insufficient user balance');
-      return;
+    try {
+        const result = await this.apiCall('/api/admin/update-balance', 'POST', {
+            userId: userId,
+            amount: parseFloat(amount),
+            action: 'credit'
+        });
+        
+        if (result.success) {
+            this.showToast('success', 'Success', result.message);
+            this.loadUsers(); // Reload users to show updated balance
+        }
+    } catch (error) {
+        console.error('Error crediting user:', error);
     }
-    
-    localStorage.setItem(key, (current - amount).toFixed(2));
-    this.showToast('success', 'Success', `Debited $${amount.toFixed(2)} from ${email}`);
-    await this.loadSectionData(this.currentSection);
-  }
+}
 
+async debitUser(userId) {
+    const amount = prompt('Enter amount to debit:');
+    if (!amount || isNaN(amount)) return;
+    
+    try {
+        const result = await this.apiCall('/api/admin/update-balance', 'POST', {
+            userId: userId,
+            amount: parseFloat(amount),
+            action: 'debit'
+        });
+        
+        if (result.success) {
+            this.showToast('success', 'Success', result.message);
+            this.loadUsers(); // Reload users to show updated balance
+        }
+    } catch (error) {
+        console.error('Error debiting user:', error);
+    }
+}
   async deleteUser(email) {
     if (!confirm(`Delete all data for ${email}?`)) return;
     

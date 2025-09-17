@@ -776,7 +776,7 @@ async debitUser(userId) {
     // return Object.keys(localStorage)
       // .filter(key => key.startsWith("balance_"))
       // .map(key => key.replace("balance_", ""));
-  }
+  // }
 
   // Event Listeners Setup
   setupEventListeners() {

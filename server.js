@@ -35,9 +35,8 @@ if (process.env.NODE_ENV === 'production') {
 
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'https://swiftxchangepro.netlify.app';
 
-// app.use(helmet());
 app.use(cors({
-  origin: FRONTEND_ORIGIN,
+  origin: 'https://swiftxchangepro.netlify.app', // Your exact Netlify URL
   credentials: true,
   methods: ['GET','POST','PUT','DELETE','OPTIONS']
 }));
@@ -250,7 +249,6 @@ const sessionStore = new MySQLStore({
 }, pool);
 
 
-// Sessions
 app.use(session({
     key: 'swiftx_session',
     secret: process.env.SESSION_SECRET || 'supersecret',
@@ -258,11 +256,11 @@ app.use(session({
     resave: false,
     saveUninitialized: false,
     cookie: {
-  maxAge: 24 * 60 * 60 * 1000,
-  secure: false,        
-  sameSite: 'lax'
-}
-
+        maxAge: 24 * 60 * 60 * 1000,
+        secure: true,        // Change to true for HTTPS
+        sameSite: 'none',    // Change from 'lax' to 'none' for cross-origin
+        httpOnly: true       // Add this for security
+    }
 }));
 
 // Email transporter - manual Gmail configuration (no service override)
@@ -890,6 +888,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

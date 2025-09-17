@@ -721,9 +721,13 @@ app.post('/api/logout', (req, res) => {
 app.get('/api/verify-admin-access', (req, res) => {
     console.log('🔐 Verifying admin access for session:', req.sessionID);
     console.log('📋 Session data:', req.session);
+    console.log('🍪 Request headers cookies:', req.headers.cookie);
+    console.log('🌐 Request origin:', req.headers.origin);
+    console.log('👤 Session userId:', req.session.userId);
+    console.log('🔑 Session isAdmin:', req.session.isAdmin);
     
     if (!req.session.userId || !req.session.isAdmin) {
-        console.log('❌ Admin access denied');
+        console.log('❌ Admin access denied - no session data');
         return res.json({ success: false, message: "Admin access required" });
     }
     
@@ -886,6 +890,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

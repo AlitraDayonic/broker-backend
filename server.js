@@ -20,6 +20,7 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use('/admin', express.static('admin'));
 app.use(express.static('public')); // serve frontend
 
 // Always prefer MYSQL_URL
@@ -889,6 +890,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

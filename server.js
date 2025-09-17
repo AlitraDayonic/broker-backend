@@ -877,28 +877,7 @@ app.get('/api/admin/users', authRequired, async (req, res) => {
         res.json({ success: false, message: `Database error: ${error.message}` });
     }
 });
-        // Updated query to match your actual table structure
-        const [users] = await pool.execute(`
-            SELECT u.id, u.email, u.first_name, u.last_name, u.username, u.phone, 
-                   u.country, u.status, u.role, u.email_verified, u.created_at, 
-                   u.last_login_at, up.account_type
-            FROM users u
-            LEFT JOIN user_profiles up ON u.id = up.user_id
-            ORDER BY u.created_at DESC
-        `);
-
-        console.log('✅ Found users:', users.length);
-
-        res.json({ 
-            success: true, 
-            users: users 
-        });
-    } catch (error) {
-        console.error('❌ Database error fetching users:', error);
-        res.json({ success: false, message: `Database error: ${error.message}` });
-    }
-});
-
+        
 // Admin endpoint to get dashboard stats
 app.get('/api/admin/dashboard-stats', authRequired, async (req, res) => {
     try {
@@ -995,6 +974,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

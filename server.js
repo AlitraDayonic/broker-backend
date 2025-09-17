@@ -257,9 +257,10 @@ app.use(session({
     saveUninitialized: false,
     cookie: {
         maxAge: 24 * 60 * 60 * 1000,
-        secure: true,        // Change to true for HTTPS
-        sameSite: 'none',    // Change from 'lax' to 'none' for cross-origin
-        httpOnly: true       // Add this for security
+        secure: true,
+        sameSite: 'none',
+        httpOnly: false,  // Change to false temporarily for testing
+        domain: undefined // Explicitly set to undefined for cross-origin
     }
 }));
 
@@ -888,6 +889,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

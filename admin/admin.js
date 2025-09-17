@@ -5,7 +5,7 @@
 async function checkAdminAccess() {
     try {
       console.log('🍪 All cookies before request:', document.cookie);
-        const response = await fetch('https://broker-backend-production.up.railway.app/api/verify-admin-access', {
+        const response = await fetch('/api/verify-admin-access', {
             credentials: 'include'
         });
         const result = await response.json();
@@ -64,7 +64,7 @@ class AdminDashboard {
         options.body = JSON.stringify(data);
       }
       
-      const baseURL = 'https://broker-backend-production.up.railway.app';
+      const baseURL = '';
       const fullURL = endpoint.startsWith('http') ? endpoint : baseURL + endpoint;
       const response = await fetch(fullURL, options);
       const result = await response.json();

@@ -313,7 +313,7 @@ async loadUsers() {
                 </td>
                 <td>${user.email}</td>
                 <td><span class="status-badge ${user.status}">${user.status}</span></td>
-                <td class="data-value currency">$0.00</td>
+                <td class="data-value currency">$${(user.balance || 0).toFixed(2)}</td>
                 <td class="data-value currency">$0.00</td>
                 <td>${user.last_login_at ? new Date(user.last_login_at).toLocaleDateString() : 'Never'}</td>
                 <td>
@@ -340,7 +340,6 @@ async loadUsers() {
             usersTbody.appendChild(row);
         });
 
-        // Update pagination info
         if (usersTotal) usersTotal.textContent = filteredUsers.length;
         if (usersShowing) usersShowing.textContent = paginatedUsers.length;
         
@@ -350,8 +349,7 @@ async loadUsers() {
         console.error('Error loading users:', error);
         this.showToast('error', 'Error', 'Failed to load users');
     }
-}
-    
+}    
     
     // Update the filterUsers function to work with user objects
 filterUsers(users) {

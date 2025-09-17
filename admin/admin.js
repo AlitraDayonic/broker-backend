@@ -284,53 +284,68 @@ async loadUsers() {
     if (!usersTbody) return;
 
     try {
-        const result = await this.apiCall('/api/admin/users');
+        console.log('Fetching users from backend...');
         
-        if (!result.success) {
-            this.showToast('error', 'Error', result.message);
-            return;
+        // Fetch users from your backend API (not localStorage!)
+        const response = await fetch('/api/admin/users', {
+            method: 'GET',
+            credentials: 'include'
+        });
+
+        const data = await response.json();
+        console.log('Backend response:', data);
+
+        if (!data.success) {
+            throw new Error(data.message || 'Failed to fetch users');
         }
 
-        const users = result.users;
-        const filteredUsers = this.filterUsers(users);
-        const paginatedUsers = this.paginateData(filteredUsers);
+        const users = data.users || [];
+        
+        // Update totals
+        if (usersTotal) usersTotal.textContent = users.length;
+        if (usersShowing) usersShowing.textContent = users.length;
 
+        // Clear table
         usersTbody.innerHTML = '';
 
-        paginatedUsers.forEach((user, index) => {
+        // Populate table with real backend data
+        users.forEach((user, index) => {
+            // Safely convert balance to number and format
+            const balance = parseFloat(user.balance || 0);
+            
             const row = document.createElement("tr");
             row.innerHTML = `
-                <td><input type="checkbox" data-user="${user.id}" class="user-checkbox"></td>
+                <td><input type="checkbox" data-user="${user.email}" class="user-checkbox"></td>
                 <td>#${user.id}</td>
                 <td>
                     <div class="user-info">
-                        <img src="https://ui-avatars.com/api/?name=${encodeURIComponent(user.email)}&background=00c9a7&color=fff" alt="${user.email}" class="user-avatar">
+                        <img src="https://ui-avatars.com/api/?name=${encodeURIComponent(user.first_name + ' ' + user.last_name)}&background=00c9a7&color=fff" alt="${user.email}" class="user-avatar">
                         <div>
-                            <div class="user-name">${user.first_name || 'N/A'} ${user.last_name || ''}</div>
+                            <div class="user-name">${user.first_name || ''} ${user.last_name || ''}</div>
                             <div class="user-email">${user.email}</div>
                         </div>
                     </div>
                 </td>
                 <td>${user.email}</td>
-                <td><span class="status-badge ${user.status}">${user.status}</span></td>
-                <td class="data-value currency">$${(user.balance || 0).toFixed(2)}</td>
+                <td><span class="status-badge ${user.status || 'active'}">${user.status || 'Active'}</span></td>
+                <td class="data-value currency">$${balance.toFixed(2)}</td>
                 <td class="data-value currency">$0.00</td>
                 <td>${user.last_login_at ? new Date(user.last_login_at).toLocaleDateString() : 'Never'}</td>
                 <td>
                     <div class="action-buttons-group">
-                        <button class="action-btn-sm view" onclick="adminDashboard.viewUser(${user.id})" title="View Details">
+                        <button class="action-btn-sm view" onclick="adminDashboard.viewUser('${user.email}')" title="View Details">
                             <i class="fas fa-eye"></i>
                         </button>
-                        <button class="action-btn-sm edit" onclick="adminDashboard.editUser(${user.id})" title="Edit User">
+                        <button class="action-btn-sm edit" onclick="adminDashboard.editUser('${user.email}')" title="Edit User">
                             <i class="fas fa-edit"></i>
                         </button>
-                        <button class="action-btn-sm approve" onclick="adminDashboard.creditUser(${user.id})" title="Credit">
+                        <button class="action-btn-sm approve" onclick="adminDashboard.creditUser('${user.email}')" title="Credit">
                             <i class="fas fa-plus"></i>
                         </button>
-                        <button class="action-btn-sm reject" onclick="adminDashboard.debitUser(${user.id})" title="Debit">
+                        <button class="action-btn-sm reject" onclick="adminDashboard.debitUser('${user.email}')" title="Debit">
                             <i class="fas fa-minus"></i>
                         </button>
-                        <button class="action-btn-sm delete" onclick="adminDashboard.deleteUser(${user.id})" title="Delete">
+                        <button class="action-btn-sm delete" onclick="adminDashboard.deleteUser('${user.email}')" title="Delete">
                             <i class="fas fa-trash"></i>
                         </button>
                     </div>
@@ -340,44 +355,52 @@ async loadUsers() {
             usersTbody.appendChild(row);
         });
 
-        if (usersTotal) usersTotal.textContent = filteredUsers.length;
-        if (usersShowing) usersShowing.textContent = paginatedUsers.length;
-        
-        this.updatePagination('users', filteredUsers.length);
-        
+        console.log(`Loaded ${users.length} users successfully`);
+
     } catch (error) {
         console.error('Error loading users:', error);
-        this.showToast('error', 'Error', 'Failed to load users');
+        
+        // Show error in the table
+        usersTbody.innerHTML = `
+            <tr>
+                <td colspan="9" style="text-align: center; padding: 40px; color: #e74c3c;">
+                    <i class="fas fa-exclamation-triangle" style="font-size: 24px; margin-bottom: 10px;"></i>
+                    <br>
+                    Error loading users: ${error.message}
+                    <br>
+                    <small>Check console for details</small>
+                </td>
+            </tr>
+        `;
     }
 }    
-    
     // Update the filterUsers function to work with user objects
-filterUsers(users) {
-    let filtered = [...users];
+// filterUsers(users) {
+//     let filtered = [...users];
     
     // Apply search filter
-    if (this.searchQuery) {
-        filtered = filtered.filter(user => 
-            user.email.toLowerCase().includes(this.searchQuery.toLowerCase()) ||
-            (user.first_name && user.first_name.toLowerCase().includes(this.searchQuery.toLowerCase())) ||
-            (user.last_name && user.last_name.toLowerCase().includes(this.searchQuery.toLowerCase()))
-        );
-    }
+    // if (this.searchQuery) {
+    //     filtered = filtered.filter(user => 
+    //         user.email.toLowerCase().includes(this.searchQuery.toLowerCase()) ||
+    //         (user.first_name && user.first_name.toLowerCase().includes(this.searchQuery.toLowerCase())) ||
+    //         (user.last_name && user.last_name.toLowerCase().includes(this.searchQuery.toLowerCase()))
+    //     );
+    // }
 
     // Apply status filter
-    const statusFilter = document.getElementById('userStatusFilter')?.value;
-    if (statusFilter && statusFilter !== 'all') {
-        filtered = filtered.filter(user => user.status === statusFilter);
-    }
+//     const statusFilter = document.getElementById('userStatusFilter')?.value;
+//     if (statusFilter && statusFilter !== 'all') {
+//         filtered = filtered.filter(user => user.status === statusFilter);
+//     }
 
-    return filtered;
-}
+//     return filtered;
+// }
 
-  paginateData(data) {
-    const startIndex = (this.currentPage - 1) * this.itemsPerPage;
-    const endIndex = startIndex + this.itemsPerPage;
-    return data.slice(startIndex, endIndex);
-  }
+//   paginateData(data) {
+//     const startIndex = (this.currentPage - 1) * this.itemsPerPage;
+//     const endIndex = startIndex + this.itemsPerPage;
+//     return data.slice(startIndex, endIndex);
+//   }
 
   updatePagination(type, totalItems) {
     const paginationContainer = document.getElementById(`${type}Pagination`);
@@ -749,10 +772,10 @@ async debitUser(userId) {
   }
 
   // Helper Functions
-  getAllUserEmails() {
-    return Object.keys(localStorage)
-      .filter(key => key.startsWith("balance_"))
-      .map(key => key.replace("balance_", ""));
+  // getAllUserEmails() {
+    // return Object.keys(localStorage)
+      // .filter(key => key.startsWith("balance_"))
+      // .map(key => key.replace("balance_", ""));
   }
 
   // Event Listeners Setup

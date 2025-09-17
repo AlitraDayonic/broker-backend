@@ -853,16 +853,30 @@ app.get('/api/profile', authRequired, async (req, res) => {
 
 
 
-// Admin endpoint to get all users
+// Admin endpoint to get all users with their account balances
 app.get('/api/admin/users', authRequired, async (req, res) => {
     try {
-        // Check if user is admin
         if (!req.session.isAdmin) {
             return res.json({ success: false, message: "Admin access required" });
         }
 
-        console.log('🔍 Fetching users from database...');
+        const [users] = await pool.execute(`
+            SELECT 
+                u.id, u.email, u.first_name, u.last_name, u.username, 
+                u.phone, u.country, u.status, u.role, u.email_verified, 
+                u.created_at, u.last_login_at,
+                ta.balance, ta.account_type, ta.account_number
+            FROM users u
+            LEFT JOIN trading_accounts ta ON u.id = ta.user_id
+            ORDER BY u.created_at DESC
+        `);
 
+        res.json({ success: true, users: users });
+    } catch (error) {
+        console.error('Database error fetching users:', error);
+        res.json({ success: false, message: `Database error: ${error.message}` });
+    }
+});
         // Updated query to match your actual table structure
         const [users] = await pool.execute(`
             SELECT u.id, u.email, u.first_name, u.last_name, u.username, u.phone, 
@@ -895,16 +909,23 @@ app.get('/api/admin/dashboard-stats', authRequired, async (req, res) => {
         // Get total users
         const [userCount] = await pool.execute('SELECT COUNT(*) as count FROM users');
         
-        // Since you don't have balance in users table, we'll set it to 0 for now
-        // You can update this later when you show me where balances are stored
+        // Get total balance from trading accounts
+        const [balanceSum] = await pool.execute('SELECT SUM(balance) as total FROM trading_accounts');
+        
+        // Get total trades
+        const [tradesCount] = await pool.execute('SELECT COUNT(*) as count FROM trades');
+        
+        // Get pending deposits and withdrawals
+        const [pendingDeposits] = await pool.execute("SELECT COUNT(*) as count FROM deposits WHERE status = 'pending'");
+        const [pendingWithdrawals] = await pool.execute("SELECT COUNT(*) as count FROM withdrawals WHERE status = 'pending'");
         
         res.json({ 
             success: true, 
             stats: {
                 totalUsers: userCount[0].count,
-                totalBalance: 0, // Update this when you tell me where balances are stored
-                totalTrades: 0, 
-                pendingActions: 0 
+                totalBalance: balanceSum[0].total || 0,
+                totalTrades: tradesCount[0].count,
+                pendingActions: pendingDeposits[0].count + pendingWithdrawals[0].count
             }
         });
     } catch (error) {
@@ -974,6 +995,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

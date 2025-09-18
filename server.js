@@ -165,6 +165,54 @@ await pool.execute(`
             )
         `);
 
+      // Support tickets table
+await pool.execute(`
+    CREATE TABLE IF NOT EXISTS support_tickets (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        user_id INT NOT NULL,
+        ticket_number VARCHAR(20) UNIQUE NOT NULL,
+        subject VARCHAR(200) NOT NULL,
+        category ENUM('technical', 'account', 'trading', 'billing', 'general') DEFAULT 'general',
+        priority ENUM('low', 'medium', 'high', 'urgent') DEFAULT 'medium',
+        status ENUM('open', 'in_progress', 'waiting_response', 'resolved', 'closed') DEFAULT 'open',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+`);
+
+// Support messages (for ticket conversations)
+await pool.execute(`
+    CREATE TABLE IF NOT EXISTS support_messages (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        ticket_id INT NOT NULL,
+        sender_id INT NOT NULL,
+        sender_type ENUM('user', 'admin') NOT NULL,
+        message TEXT NOT NULL,
+        attachments JSON,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (ticket_id) REFERENCES support_tickets(id) ON DELETE CASCADE,
+        FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+`);
+
+// Knowledge base articles
+await pool.execute(`
+    CREATE TABLE IF NOT EXISTS kb_articles (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        title VARCHAR(200) NOT NULL,
+        slug VARCHAR(200) UNIQUE NOT NULL,
+        content TEXT NOT NULL,
+        category VARCHAR(100),
+        tags JSON,
+        status ENUM('draft', 'published') DEFAULT 'published',
+        views INT DEFAULT 0,
+        helpful_votes INT DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )
+`);
+
       
 
         console.log('✅ Database tables initialized successfully');
@@ -491,6 +539,7 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
+
 // Temporary admin registration endpoint (remove after creating admin)
 app.post('/api/register-admin', async (req, res) => {
     const { firstName, lastName, username, email, password } = req.body;
@@ -521,6 +570,7 @@ app.post('/api/register-admin', async (req, res) => {
         res.json({ success: false, message: "Admin registration failed" });
     }
 });
+
 
 // Replace your /api/admin-login endpoint with this version:
 app.post('/api/admin-login', async (req, res) => {
@@ -596,6 +646,140 @@ app.post('/api/admin-login', async (req, res) => {
     } catch (err) {
         console.error('❌ Admin login error:', err);
         res.json({ success: false, message: "Admin login failed" });
+    }
+});
+
+// Create support ticket
+app.post('/api/support/tickets', authRequired, async (req, res) => {
+    try {
+        const { subject, category, priority, message } = req.body;
+        const userId = req.session.userId;
+        
+        // Generate unique ticket number
+        const ticketNumber = 'TK' + Date.now().toString().slice(-8);
+        
+        // Create ticket
+        const [ticketResult] = await pool.execute(`
+            INSERT INTO support_tickets (user_id, ticket_number, subject, category, priority)
+            VALUES (?, ?, ?, ?, ?)
+        `, [userId, ticketNumber, subject, category, priority]);
+        
+        const ticketId = ticketResult.insertId;
+        
+        // Add first message
+        await pool.execute(`
+            INSERT INTO support_messages (ticket_id, sender_id, sender_type, message)
+            VALUES (?, ?, 'user', ?)
+        `, [ticketId, userId, message]);
+        
+        res.json({ success: true, ticketNumber, ticketId });
+    } catch (error) {
+        console.error('Error creating support ticket:', error);
+        res.json({ success: false, message: 'Failed to create ticket' });
+    }
+});
+
+// Get user's support tickets
+app.get('/api/support/tickets', authRequired, async (req, res) => {
+    try {
+        const userId = req.session.userId;
+        
+        const [tickets] = await pool.execute(`
+            SELECT st.*, 
+                   (SELECT COUNT(*) FROM support_messages WHERE ticket_id = st.id) as message_count,
+                   (SELECT created_at FROM support_messages WHERE ticket_id = st.id ORDER BY created_at DESC LIMIT 1) as last_message_at
+            FROM support_tickets st 
+            WHERE st.user_id = ?
+            ORDER BY st.updated_at DESC
+        `, [userId]);
+        
+        res.json({ success: true, tickets });
+    } catch (error) {
+        console.error('Error fetching tickets:', error);
+        res.json({ success: false, message: 'Failed to fetch tickets' });
+    }
+});
+
+// Get ticket messages
+app.get('/api/support/tickets/:id/messages', authRequired, async (req, res) => {
+    try {
+        const ticketId = req.params.id;
+        const userId = req.session.userId;
+        
+        // Verify user owns this ticket or is admin
+        const [ticket] = await pool.execute(
+            'SELECT user_id FROM support_tickets WHERE id = ?', 
+            [ticketId]
+        );
+        
+        if (ticket.length === 0 || (ticket[0].user_id !== userId && !req.session.isAdmin)) {
+            return res.json({ success: false, message: 'Access denied' });
+        }
+        
+        const [messages] = await pool.execute(`
+            SELECT sm.*, u.first_name, u.last_name, u.email
+            FROM support_messages sm
+            JOIN users u ON sm.sender_id = u.id
+            WHERE sm.ticket_id = ?
+            ORDER BY sm.created_at ASC
+        `, [ticketId]);
+        
+        res.json({ success: true, messages });
+    } catch (error) {
+        console.error('Error fetching messages:', error);
+        res.json({ success: false, message: 'Failed to fetch messages' });
+    }
+});
+
+// Admin: Get all support tickets
+app.get('/api/admin/support/tickets', authRequired, async (req, res) => {
+    try {
+        if (!req.session.isAdmin) {
+            return res.json({ success: false, message: 'Admin access required' });
+        }
+        
+        const [tickets] = await pool.execute(`
+            SELECT st.*, u.first_name, u.last_name, u.email,
+                   (SELECT COUNT(*) FROM support_messages WHERE ticket_id = st.id) as message_count
+            FROM support_tickets st
+            JOIN users u ON st.user_id = u.id
+            ORDER BY st.updated_at DESC
+        `);
+        
+        res.json({ success: true, tickets });
+    } catch (error) {
+        console.error('Error fetching admin tickets:', error);
+        res.json({ success: false, message: 'Failed to fetch tickets' });
+    }
+});
+
+// Knowledge base search
+app.get('/api/kb/search', async (req, res) => {
+    try {
+        const { q } = req.query;
+        
+        let query = `
+            SELECT id, title, slug, category, 
+                   SUBSTRING(content, 1, 200) as excerpt
+            FROM kb_articles 
+            WHERE status = 'published'
+        `;
+        
+        const params = [];
+        
+        if (q) {
+            query += ` AND (title LIKE ? OR content LIKE ?)`;
+            params.push(`%${q}%`, `%${q}%`);
+        }
+        
+        query += ` ORDER BY helpful_votes DESC, views DESC LIMIT 20`;
+        
+        const [articles] = await pool.execute(query, params);
+        
+        res.json({ success: true, articles });
+    } catch (error) {
+        console.error('Error searching knowledge base:', error);
+        res.json({ success: false, message: 'Search failed' });
     }
 });
 
@@ -974,6 +1158,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

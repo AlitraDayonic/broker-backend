@@ -154,6 +154,7 @@ class AdminDashboard {
       withdrawals: 'Withdrawal Management',
       portfolio: 'Portfolio Viewer',
       analytics: 'Platform Analytics',
+        support: 'Support Management',
       settings: 'System Settings'
     };
     return titles[section] || 'Admin Panel';
@@ -180,6 +181,9 @@ class AdminDashboard {
       case 'portfolio':
         await this.loadPortfolioViewer();
         break;
+            case 'support':  // Add this case
+            await this.loadSupportTickets();
+            break;
     }
   }
 
@@ -220,6 +224,44 @@ class AdminDashboard {
     }
 }
 
+    async loadSupportTickets() {
+    try {
+        const result = await this.apiCall('/api/admin/support/tickets');
+        
+        if (result.success) {
+            this.displayAdminTickets(result.tickets);
+        }
+    } catch (error) {
+        console.error('Error loading support tickets:', error);
+        this.showToast('error', 'Error', 'Failed to load support tickets');
+    }
+}
+
+displayAdminTickets(tickets) {
+    const supportTbody = document.getElementById('admin-support-tbody');
+    if (!supportTbody) return;
+
+    supportTbody.innerHTML = tickets.map(ticket => `
+        <tr>
+            <td>#${ticket.id}</td>
+            <td>${ticket.ticket_number}</td>
+            <td>${ticket.first_name} ${ticket.last_name}</td>
+            <td>${ticket.subject}</td>
+            <td><span class="status-badge ${ticket.status}">${ticket.status}</span></td>
+            <td><span class="priority-badge priority-${ticket.priority}">${ticket.priority}</span></td>
+            <td>${new Date(ticket.created_at).toLocaleDateString()}</td>
+            <td>${ticket.message_count} messages</td>
+            <td>
+                <button class="action-btn-sm view" onclick="adminDashboard.viewTicket(${ticket.id})">
+                    <i class="fas fa-eye"></i>
+                </button>
+                <button class="action-btn-sm edit" onclick="adminDashboard.respondToTicket(${ticket.id})">
+                    <i class="fas fa-reply"></i>
+                </button>
+            </td>
+        </tr>
+    `).join('');
+}
     
   async loadRecentActivity() {
     const activityList = document.getElementById('activityList');

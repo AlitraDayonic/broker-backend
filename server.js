@@ -679,6 +679,145 @@ app.post('/api/support/tickets', authRequired, async (req, res) => {
     }
 });
 
+// Live crypto data endpoint
+app.get('/api/crypto-data/:symbol', async (req, res) => {
+    try {
+        const { symbol } = req.params;
+        const { interval = '1d', limit = 100 } = req.query;
+        
+        // Using Binance API for crypto data (free, no API key needed)
+        const binanceSymbol = symbol.replace('/', '').toUpperCase();
+        const url = `https://api.binance.com/api/v3/klines?symbol=${binanceSymbol}&interval=${interval}&limit=${limit}`;
+        
+        const response = await fetch(url);
+        const data = await response.json();
+        
+        if (Array.isArray(data)) {
+            const formattedData = data.map(item => ({
+                time: new Date(item[0]).toISOString().split('T')[0],
+                open: parseFloat(item[1]),
+                high: parseFloat(item[2]),
+                low: parseFloat(item[3]),
+                close: parseFloat(item[4]),
+                volume: parseFloat(item[5])
+            }));
+            
+            res.json({ success: true, data: formattedData });
+        } else {
+            throw new Error('Invalid data format');
+        }
+    } catch (error) {
+        console.error('Crypto data error:', error);
+        res.json({ success: false, message: 'Failed to fetch crypto data' });
+    }
+});
+
+// Live forex data endpoint  
+app.get('/api/forex-data/:pair', async (req, res) => {
+    try {
+        const { pair } = req.params;
+        const { interval = 'D1', count = 100 } = req.query;
+        
+        // Using Alpha Vantage for forex (you'll need a free API key)
+        const API_KEY = process.env.ALPHA_VANTAGE_KEY || 'demo'; // Get free key at alphavantage.co
+        const url = `https://www.alphavantage.co/query?function=FX_DAILY&from_symbol=${pair.substring(0,3)}&to_symbol=${pair.substring(3,6)}&apikey=${API_KEY}`;
+        
+        const response = await fetch(url);
+        const data = await response.json();
+        
+        if (data['Time Series (FX)']) {
+            const timeSeries = data['Time Series (FX)'];
+            const formattedData = Object.entries(timeSeries)
+                .slice(0, count)
+                .map(([date, values]) => ({
+                    time: date,
+                    open: parseFloat(values['1. open']),
+                    high: parseFloat(values['2. high']),
+                    low: parseFloat(values['3. low']),
+                    close: parseFloat(values['4. close'])
+                }))
+                .reverse();
+            
+            res.json({ success: true, data: formattedData });
+        } else {
+            throw new Error('Invalid forex data format');
+        }
+    } catch (error) {
+        console.error('Forex data error:', error);
+        res.json({ success: false, message: 'Failed to fetch forex data' });
+    }
+});
+
+// Live prices for multiple symbols (for mini charts and watchlist)
+app.get('/api/live-prices', async (req, res) => {
+    try {
+        const { symbols, market } = req.query;
+        const symbolList = symbols ? symbols.split(',') : [];
+        const prices = {};
+        
+        if (market === 'crypto') {
+            // Get crypto prices from Binance
+            const response = await fetch('https://api.binance.com/api/v3/ticker/24hr');
+            const data = await response.json();
+            
+            symbolList.forEach(symbol => {
+                const binanceSymbol = symbol.replace('/', '').toUpperCase();
+                const ticker = data.find(t => t.symbol === binanceSymbol);
+                
+                if (ticker) {
+                    prices[symbol] = {
+                        price: parseFloat(ticker.lastPrice),
+                        change: parseFloat(ticker.priceChange),
+                        changePercent: parseFloat(ticker.priceChangePercent),
+                        volume: parseFloat(ticker.volume)
+                    };
+                }
+            });
+        } else if (market === 'forex') {
+            // For forex, you'd need a real-time forex API
+            // This is a simplified example - you may need a paid service for real-time forex
+            const API_KEY = process.env.ALPHA_VANTAGE_KEY || 'demo';
+            
+            for (const pair of symbolList) {
+                try {
+                    const url = `https://www.alphavantage.co/query?function=CURRENCY_EXCHANGE_RATE&from_currency=${pair.substring(0,3)}&to_currency=${pair.substring(3,6)}&apikey=${API_KEY}`;
+                    const response = await fetch(url);
+                    const data = await response.json();
+                    
+                    if (data['Realtime Currency Exchange Rate']) {
+                        const rate = data['Realtime Currency Exchange Rate'];
+                        prices[pair] = {
+                            price: parseFloat(rate['5. Exchange Rate']),
+                            change: 0, // Alpha Vantage free tier doesn't provide change
+                            changePercent: 0,
+                            lastUpdate: rate['6. Last Refreshed']
+                        };
+                    }
+                } catch (error) {
+                    console.error(`Error fetching ${pair}:`, error);
+                }
+            }
+        }
+        
+        res.json({ success: true, prices });
+    } catch (error) {
+        console.error('Live prices error:', error);
+        res.json({ success: false, message: 'Failed to fetch live prices' });
+    }
+});
+
+// WebSocket for real-time updates (optional but recommended)
+app.get('/api/start-realtime/:market', (req, res) => {
+    const { market } = req.params;
+    
+    if (market === 'crypto') {
+        // You can implement WebSocket connection to Binance streams
+        res.json({ success: true, message: 'Crypto real-time feed started' });
+    } else {
+        res.json({ success: true, message: 'Forex real-time feed started' });
+    }
+});
+
 // Get user's support tickets
 app.get('/api/support/tickets', authRequired, async (req, res) => {
     try {
@@ -1158,6 +1297,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

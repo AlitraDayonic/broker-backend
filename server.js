@@ -718,15 +718,17 @@ app.get('/api/forex-data/:pair', async (req, res) => {
         const { pair } = req.params;
         const { interval = 'D1', count = 100 } = req.query;
         
-        // Using Alpha Vantage for forex (you'll need a free API key)
-        const API_KEY = process.env.ALPHA_VANTAGE_KEY || '0H7XF1OM8577OKS9'; // Get free key at alphavantage.co
+        const API_KEY = process.env.ALPHA_VANTAGE_KEY || '0H7XF1OM8577OKS9';
         const url = `https://www.alphavantage.co/query?function=FX_DAILY&from_symbol=${pair.substring(0,3)}&to_symbol=${pair.substring(3,6)}&apikey=${API_KEY}`;
+        
+        console.log('Fetching forex data from:', url);
         
         const response = await fetch(url);
         const data = await response.json();
         
-        if (data['Time Series (FX)']) {
-            const timeSeries = data['Time Series (FX)'];
+        // FIXED: Correct property name
+        if (data['Time Series FX (Daily)']) {
+            const timeSeries = data['Time Series FX (Daily)'];
             const formattedData = Object.entries(timeSeries)
                 .slice(0, count)
                 .map(([date, values]) => ({
@@ -736,11 +738,19 @@ app.get('/api/forex-data/:pair', async (req, res) => {
                     low: parseFloat(values['3. low']),
                     close: parseFloat(values['4. close'])
                 }))
-                .reverse();
+                .reverse(); // Reverse to get chronological order
             
+            console.log(`Successfully formatted ${formattedData.length} forex data points for ${pair}`);
             res.json({ success: true, data: formattedData });
+        } else if (data['Error Message']) {
+            console.error('Alpha Vantage error:', data['Error Message']);
+            res.json({ success: false, message: data['Error Message'] });
+        } else if (data['Note']) {
+            console.error('Alpha Vantage rate limit:', data['Note']);
+            res.json({ success: false, message: 'Rate limit exceeded. Please try again later.' });
         } else {
-            throw new Error('Invalid forex data format');
+            console.error('Unexpected response structure:', data);
+            res.json({ success: false, message: 'Invalid forex data format' });
         }
     } catch (error) {
         console.error('Forex data error:', error);
@@ -1297,6 +1307,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

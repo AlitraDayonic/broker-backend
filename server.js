@@ -40,6 +40,7 @@ app.use(cors({
   origin: 'https://swiftxchangepro.netlify.app', // Your exact Netlify URL
   credentials: true,
   methods: ['GET','POST','PUT','DELETE','OPTIONS']
+  allowedHeaders: ['Content-Type', 'Authorization', 'Cookie']
 }));
 
 
@@ -308,7 +309,7 @@ app.use(session({
         maxAge: 24 * 60 * 60 * 1000,
         secure: true,
         sameSite: 'none',
-        httpOnly: false,  // Change to false temporarily for testing
+        httpOnly: true,  // Change to false temporarily for testing
         domain: undefined // Explicitly set to undefined for cross-origin
     }
 }));
@@ -1307,6 +1308,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

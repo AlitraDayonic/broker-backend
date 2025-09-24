@@ -719,7 +719,7 @@ app.get('/api/forex-data/:pair', async (req, res) => {
         const { interval = 'D1', count = 100 } = req.query;
         
         // Using Alpha Vantage for forex (you'll need a free API key)
-        const API_KEY = process.env.ALPHA_VANTAGE_KEY || 'demo'; // Get free key at alphavantage.co
+        const API_KEY = process.env.ALPHA_VANTAGE_KEY || '0H7XF1OM8577OKS9'; // Get free key at alphavantage.co
         const url = `https://www.alphavantage.co/query?function=FX_DAILY&from_symbol=${pair.substring(0,3)}&to_symbol=${pair.substring(3,6)}&apikey=${API_KEY}`;
         
         const response = await fetch(url);
@@ -1297,6 +1297,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

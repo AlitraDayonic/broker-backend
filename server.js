@@ -40,7 +40,6 @@ app.use(cors({
   origin: 'https://swiftxchangepro.netlify.app', // Your exact Netlify URL
   credentials: true,
   methods: ['GET','POST','PUT','DELETE','OPTIONS']
-  allowedHeaders: ['Content-Type', 'Authorization', 'Cookie']
 }));
 
 
@@ -1308,6 +1307,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

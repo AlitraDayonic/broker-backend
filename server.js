@@ -934,8 +934,16 @@ app.get('/api/kb/search', async (req, res) => {
 
 // Dashboard (protected)
 app.get('/api/dashboard', authRequired, async (req, res) => {
-    try {
+   try {
+        console.log('🔍 Dashboard request debug:', {
+            sessionId: req.sessionID,
+            userId: req.session.userId,
+            accountType: req.session.accountType,
+            userAgent: req.headers['user-agent']
+        });
+
         const [user] = await pool.execute("SELECT first_name, last_name, email, status FROM users WHERE id=?", [req.session.userId]);
+        console.log('👤 User found:', user[0]);
         
         // Get account type from session (default to demo)
         const accountType = req.session.accountType || 'demo';
@@ -1307,6 +1315,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

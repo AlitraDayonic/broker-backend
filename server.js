@@ -381,6 +381,8 @@ function authRequired(req, res, next) {
 
 // ------------------- ROUTES -------------------
 
+
+
 // Register
 app.post('/api/register', async (req, res) => {
     const { firstName, lastName, username, email, phone, country, accountType, password } = req.body;
@@ -559,6 +561,21 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
+// Debug session endpoint - REMOVE AFTER TESTING
+app.post('/api/test-session', (req, res) => {
+    req.session.testData = 'Session is working';
+    req.session.save((err) => {
+        if (err) {
+            console.error('Session save error:', err);
+            return res.json({ success: false, error: err.message });
+        }
+        res.json({ 
+            success: true, 
+            sessionId: req.sessionID,
+            message: 'Session created'
+        });
+    });
+});
 
 // Temporary admin registration endpoint (remove after creating admin)
 app.post('/api/register-admin', async (req, res) => {
@@ -1000,6 +1017,16 @@ app.get('/api/dashboard', authRequired, async (req, res) => {
     }
 });
 
+app.get('/api/test-session', (req, res) => {
+    res.json({
+        success: true,
+        sessionId: req.sessionID,
+        testData: req.session.testData,
+        userId: req.session.userId,
+        hasSession: !!req.session.testData
+    });
+});
+
 
 
 // Authentication middleware (if you don't have one)
@@ -1335,6 +1362,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

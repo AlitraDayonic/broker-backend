@@ -525,6 +525,40 @@ app.post('/api/login', async (req, res) => {
 
 
 
+// Add this endpoint to your server.js for account switching
+app.post('/api/switch-account', authRequired, async (req, res) => {
+    const { accountType } = req.body;
+    
+    try {
+        // Update session
+        req.session.accountType = accountType;
+        
+        // Check if account exists for this type
+        const [existingAccount] = await pool.execute(
+            "SELECT id FROM trading_accounts WHERE user_id = ? AND account_type = ?", 
+            [req.session.userId, accountType]
+        );
+        
+        if (existingAccount.length === 0) {
+            // Create new account if doesn't exist
+            const accountNumber = 'SXR' + Date.now().toString() + Math.floor(Math.random() * 1000);
+            const initialBalance = accountType === 'demo' ? 10000 : 0;
+            
+            await pool.execute(
+                "INSERT INTO trading_accounts (user_id, account_number, account_type, balance, currency) VALUES (?, ?, ?, ?, 'USD')", 
+                [req.session.userId, accountNumber, accountType, initialBalance]
+            );
+        }
+        
+        res.json({ success: true, message: `Switched to ${accountType} account` });
+    } catch (error) {
+        console.error('Account switch error:', error);
+        res.json({ success: false, message: 'Account switch failed' });
+    }
+});
+
+
+
 // Temporary admin registration endpoint (remove after creating admin)
 app.post('/api/register-admin', async (req, res) => {
     const { firstName, lastName, username, email, password } = req.body;
@@ -1165,6 +1199,38 @@ app.get('/api/history', authRequired, async (req, res) => {
     }
 });
 
+app.get('/api/history', authRequired, async (req, res) => {
+    try {
+        const { limit = 50 } = req.query;
+        
+        const [rows] = await pool.query(`
+            SELECT 'trade' AS type, id, asset AS description, total_amount AS amount, 'USD' AS currency, status, created_at
+            FROM trades
+            WHERE user_id=?
+
+            UNION ALL
+
+            SELECT 'deposit' AS type, id, payment_method AS description, amount, currency, status, created_at
+            FROM deposits
+            WHERE user_id=?
+
+            UNION ALL
+
+            SELECT 'withdrawal' AS type, id, payment_method AS description, amount, currency, status, created_at
+            FROM withdrawals
+            WHERE user_id=?
+
+            ORDER BY created_at DESC
+            LIMIT ?
+        `, [req.session.userId, req.session.userId, req.session.userId, parseInt(limit)]);
+
+        res.json({ success: true, history: rows });
+    } catch (err) {
+        console.error(err);
+        res.json({ success: false, message: "Failed to fetch history" });
+    }
+});
+
 // ================= Settings Routes ================= // 
 // Get user profile
 app.get('/api/profile', authRequired, async (req, res) => {
@@ -1302,6 +1368,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

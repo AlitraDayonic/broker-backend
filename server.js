@@ -432,6 +432,27 @@ app.post('/api/verify-email', async (req, res) => {
 
 // Login (debug version with detailed logging)
 app.post('/api/login', async (req, res) => {
+  if (valid) {
+        console.log('🔐 Setting session for user:', user.id);
+        req.session.userId = user.id;
+        req.session.userEmail = user.email;
+        req.session.accountType = finalAccountType;
+        
+        // Force session save
+        req.session.save((err) => {
+            if (err) {
+                console.error('❌ Session save error:', err);
+                return res.json({ success: false, message: 'Session error' });
+            }
+            
+            console.log('✅ Session saved:', req.sessionID);
+            res.json({ 
+                success: true, 
+                message: `Login successful`,
+                sessionId: req.sessionID // Debug only
+            });
+        });
+    }
     const { email, password, accountType } = req.body;
     console.log('Login attempt:', { email, accountType }); // Don't log password
     

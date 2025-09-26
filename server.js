@@ -524,50 +524,6 @@ app.post('/api/login', async (req, res) => {
 });
 
 
-// Debug endpoint - add this temporarily
-app.post('/api/debug-login', async (req, res) => {
-    const { email, password } = req.body;
-    
-    try {
-        const [rows] = await pool.execute("SELECT * FROM users WHERE email = ?", [email]);
-        if (rows.length === 0) {
-            return res.json({ success: false, message: "User not found" });
-        }
-        
-        const user = rows[0];
-        const valid = await bcrypt.compare(password, user.password_hash);
-        
-        if (!valid) {
-            return res.json({ success: false, message: "Invalid password" });
-        }
-        
-        // Test session setting
-        req.session.testUserId = user.id;
-        req.session.testData = "Debug session data";
-        
-        req.session.save((err) => {
-            if (err) {
-                console.error('Debug session save error:', err);
-                return res.json({ 
-                    success: false, 
-                    message: 'Session save failed',
-                    error: err.message,
-                    sessionId: req.sessionID
-                });
-            }
-            
-            res.json({ 
-                success: true, 
-                message: 'Debug session saved',
-                sessionId: req.sessionID,
-                sessionData: req.session
-            });
-        });
-        
-    } catch (err) {
-        res.json({ success: false, message: err.message });
-    }
-});
 
 // Temporary admin registration endpoint (remove after creating admin)
 app.post('/api/register-admin', async (req, res) => {
@@ -963,19 +919,6 @@ app.get('/api/kb/search', async (req, res) => {
 
 
 
-
-
-
-// Check debug session
-app.get('/api/debug-session', (req, res) => {
-    res.json({
-        sessionId: req.sessionID,
-        sessionData: req.session,
-        hasTestData: !!req.session.testData,
-        hasUserId: !!req.session.testUserId
-    });
-});
-
 // Dashboard (protected)
 app.get('/api/dashboard', authRequired, async (req, res) => {
    try {
@@ -1359,6 +1302,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

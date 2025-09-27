@@ -1001,6 +1001,427 @@ app.get('/api/dashboard', authRequired, async (req, res) => {
     }
 });
 
+/ ================= ENHANCED ORDER HISTORY ENDPOINTS ================= //
+// Add these to your server.js after your existing endpoints
+
+// Enhanced orders endpoint with filtering, pagination, and search
+app.get('/api/orders', authRequired, async (req, res) => {
+    try {
+        const userId = req.session.userId;
+        const {
+            page = 1,
+            limit = 25,
+            type = 'all', // all, trades, deposits, withdrawals
+            status = 'all', // all, completed, pending, failed
+            dateFrom,
+            dateTo,
+            search = '',
+            sortBy = 'created_at',
+            sortOrder = 'DESC'
+        } = req.query;
+
+        const offset = (page - 1) * limit;
+        let whereConditions = [];
+        let queryParams = [];
+
+        // Base query for different order types
+        let baseQueries = [];
+
+        // Trades query
+        if (type === 'all' || type === 'trades') {
+            let tradeWhere = ['user_id = ?'];
+            let tradeParams = [userId];
+
+            if (status !== 'all') {
+                tradeWhere.push('status = ?');
+                tradeParams.push(status);
+            }
+
+            if (search) {
+                tradeWhere.push('(asset LIKE ? OR asset_name LIKE ?)');
+                tradeParams.push(`%${search}%`, `%${search}%`);
+            }
+
+            if (dateFrom) {
+                tradeWhere.push('DATE(created_at) >= ?');
+                tradeParams.push(dateFrom);
+            }
+
+            if (dateTo) {
+                tradeWhere.push('DATE(created_at) <= ?');
+                tradeParams.push(dateTo);
+            }
+
+            baseQueries.push(`
+                SELECT 
+                    'trade' as order_type,
+                    id,
+                    asset as symbol,
+                    asset_name as description,
+                    quantity,
+                    price,
+                    total_amount as amount,
+                    trade_type as action,
+                    status,
+                    created_at,
+                    NULL as reference_number,
+                    NULL as payment_method
+                FROM trades 
+                WHERE ${tradeWhere.join(' AND ')}
+            `);
+            queryParams.push(...tradeParams);
+        }
+
+        // Deposits query
+        if (type === 'all' || type === 'deposits') {
+            let depositWhere = ['user_id = ?'];
+            let depositParams = [userId];
+
+            if (status !== 'all') {
+                depositWhere.push('status = ?');
+                depositParams.push(status);
+            }
+
+            if (search) {
+                depositWhere.push('(payment_method LIKE ? OR reference_number LIKE ?)');
+                depositParams.push(`%${search}%`, `%${search}%`);
+            }
+
+            if (dateFrom) {
+                depositWhere.push('DATE(created_at) >= ?');
+                depositParams.push(dateFrom);
+            }
+
+            if (dateTo) {
+                depositWhere.push('DATE(created_at) <= ?');
+                depositParams.push(dateTo);
+            }
+
+            baseQueries.push(`
+                SELECT 
+                    'deposit' as order_type,
+                    id,
+                    'DEPOSIT' as symbol,
+                    payment_method as description,
+                    NULL as quantity,
+                    NULL as price,
+                    amount,
+                    'deposit' as action,
+                    status,
+                    created_at,
+                    reference_number,
+                    payment_method
+                FROM deposits 
+                WHERE ${depositWhere.join(' AND ')}
+            `);
+            queryParams.push(...depositParams);
+        }
+
+        // Withdrawals query
+        if (type === 'all' || type === 'withdrawals') {
+            let withdrawalWhere = ['user_id = ?'];
+            let withdrawalParams = [userId];
+
+            if (status !== 'all') {
+                withdrawalWhere.push('status = ?');
+                withdrawalParams.push(status);
+            }
+
+            if (search) {
+                withdrawalWhere.push('(payment_method LIKE ? OR reference_number LIKE ?)');
+                withdrawalParams.push(`%${search}%`, `%${search}%`);
+            }
+
+            if (dateFrom) {
+                withdrawalWhere.push('DATE(created_at) >= ?');
+                withdrawalParams.push(dateFrom);
+            }
+
+            if (dateTo) {
+                withdrawalWhere.push('DATE(created_at) <= ?');
+                withdrawalParams.push(dateTo);
+            }
+
+            baseQueries.push(`
+                SELECT 
+                    'withdrawal' as order_type,
+                    id,
+                    'WITHDRAWAL' as symbol,
+                    payment_method as description,
+                    NULL as quantity,
+                    NULL as price,
+                    amount,
+                    'withdrawal' as action,
+                    status,
+                    created_at,
+                    reference_number,
+                    payment_method
+                FROM withdrawals 
+                WHERE ${withdrawalWhere.join(' AND ')}
+            `);
+            queryParams.push(...withdrawalParams);
+        }
+
+        // Combine queries with UNION
+        const mainQuery = `
+            SELECT * FROM (
+                ${baseQueries.join(' UNION ALL ')}
+            ) AS combined_orders
+            ORDER BY ${sortBy} ${sortOrder}
+            LIMIT ? OFFSET ?
+        `;
+
+        // Add pagination params
+        queryParams.push(parseInt(limit), parseInt(offset));
+
+        // Execute main query
+        const [orders] = await pool.execute(mainQuery, queryParams);
+
+        // Get total count for pagination
+        const countQuery = `
+            SELECT COUNT(*) as total FROM (
+                ${baseQueries.join(' UNION ALL ')}
+            ) AS combined_orders
+        `;
+        
+        // Remove pagination params for count query
+        const countParams = queryParams.slice(0, -2);
+        const [countResult] = await pool.execute(countQuery, countParams);
+        const total = countResult[0].total;
+
+        res.json({
+            success: true,
+            orders,
+            pagination: {
+                page: parseInt(page),
+                limit: parseInt(limit),
+                total,
+                totalPages: Math.ceil(total / limit),
+                hasNext: (page * limit) < total,
+                hasPrev: page > 1
+            }
+        });
+
+    } catch (err) {
+        console.error('Orders fetch error:', err);
+        res.json({ success: false, message: "Failed to fetch orders" });
+    }
+});
+
+// Get individual order details
+app.get('/api/orders/:id/:type', authRequired, async (req, res) => {
+    try {
+        const { id, type } = req.params;
+        const userId = req.session.userId;
+        
+        let query, table;
+        
+        switch(type) {
+            case 'trade':
+                table = 'trades';
+                query = `
+                    SELECT t.*, ta.account_number, ta.account_type 
+                    FROM trades t 
+                    JOIN trading_accounts ta ON t.account_id = ta.id 
+                    WHERE t.id = ? AND t.user_id = ?
+                `;
+                break;
+            case 'deposit':
+                table = 'deposits';
+                query = `
+                    SELECT d.*, ta.account_number, ta.account_type 
+                    FROM deposits d 
+                    JOIN trading_accounts ta ON d.account_id = ta.id 
+                    WHERE d.id = ? AND d.user_id = ?
+                `;
+                break;
+            case 'withdrawal':
+                table = 'withdrawals';
+                query = `
+                    SELECT w.*, ta.account_number, ta.account_type 
+                    FROM withdrawals w 
+                    JOIN trading_accounts ta ON w.account_id = ta.id 
+                    WHERE w.id = ? AND w.user_id = ?
+                `;
+                break;
+            default:
+                return res.json({ success: false, message: "Invalid order type" });
+        }
+
+        const [orders] = await pool.execute(query, [id, userId]);
+        
+        if (orders.length === 0) {
+            return res.json({ success: false, message: "Order not found" });
+        }
+
+        res.json({ success: true, order: orders[0], type });
+        
+    } catch (err) {
+        console.error('Order details error:', err);
+        res.json({ success: false, message: "Failed to fetch order details" });
+    }
+});
+
+// Order statistics for dashboard widgets
+app.get('/api/orders/stats', authRequired, async (req, res) => {
+    try {
+        const userId = req.session.userId;
+        const { period = '30' } = req.query; // days
+
+        // Total trades
+        const [tradesCount] = await pool.execute(
+            'SELECT COUNT(*) as count FROM trades WHERE user_id = ? AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)',
+            [userId, period]
+        );
+
+        // Total volume
+        const [totalVolume] = await pool.execute(
+            'SELECT SUM(total_amount) as total FROM trades WHERE user_id = ? AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)',
+            [userId, period]
+        );
+
+        // Win rate (assuming completed buy trades followed by higher sell prices indicate wins)
+        const [completedTrades] = await pool.execute(
+            'SELECT COUNT(*) as total, SUM(CASE WHEN trade_type = "sell" AND status = "completed" THEN 1 ELSE 0 END) as sells FROM trades WHERE user_id = ? AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)',
+            [userId, period]
+        );
+
+        // Recent activity (last 7 days breakdown)
+        const [recentActivity] = await pool.execute(`
+            SELECT 
+                DATE(created_at) as date,
+                COUNT(*) as trades,
+                SUM(total_amount) as volume
+            FROM trades 
+            WHERE user_id = ? AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+            GROUP BY DATE(created_at)
+            ORDER BY date DESC
+        `, [userId]);
+
+        const stats = {
+            totalTrades: tradesCount[0].count,
+            totalVolume: totalVolume[0].total || 0,
+            winRate: completedTrades[0].total > 0 ? ((completedTrades[0].sells / completedTrades[0].total) * 100).toFixed(1) : 0,
+            recentActivity
+        };
+
+        res.json({ success: true, stats });
+
+    } catch (err) {
+        console.error('Order stats error:', err);
+        res.json({ success: false, message: "Failed to fetch order statistics" });
+    }
+});
+
+// Export orders to CSV
+app.get('/api/orders/export', authRequired, async (req, res) => {
+    try {
+        const userId = req.session.userId;
+        const { type = 'all', format = 'csv' } = req.query;
+
+        // Get all orders (similar to /api/orders but without pagination)
+        let baseQueries = [];
+        let queryParams = [];
+
+        if (type === 'all' || type === 'trades') {
+            baseQueries.push(`
+                SELECT 
+                    'Trade' as Type,
+                    asset as Symbol,
+                    trade_type as Action,
+                    quantity as Quantity,
+                    price as Price,
+                    total_amount as Amount,
+                    status as Status,
+                    created_at as Date
+                FROM trades WHERE user_id = ?
+            `);
+            queryParams.push(userId);
+        }
+
+        if (type === 'all' || type === 'deposits') {
+            baseQueries.push(`
+                SELECT 
+                    'Deposit' as Type,
+                    payment_method as Symbol,
+                    'deposit' as Action,
+                    NULL as Quantity,
+                    NULL as Price,
+                    amount as Amount,
+                    status as Status,
+                    created_at as Date
+                FROM deposits WHERE user_id = ?
+            `);
+            queryParams.push(userId);
+        }
+
+        if (type === 'all' || type === 'withdrawals') {
+            baseQueries.push(`
+                SELECT 
+                    'Withdrawal' as Type,
+                    payment_method as Symbol,
+                    'withdrawal' as Action,
+                    NULL as Quantity,
+                    NULL as Price,
+                    amount as Amount,
+                    status as Status,
+                    created_at as Date
+                FROM withdrawals WHERE user_id = ?
+            `);
+            queryParams.push(userId);
+        }
+
+        const query = `
+            SELECT * FROM (
+                ${baseQueries.join(' UNION ALL ')}
+            ) AS export_data
+            ORDER BY Date DESC
+        `;
+
+        const [orders] = await pool.execute(query, queryParams);
+
+        if (format === 'csv') {
+            // Generate CSV
+            const csvHeader = 'Type,Symbol,Action,Quantity,Price,Amount,Status,Date\n';
+            const csvData = orders.map(order => 
+                `${order.Type},${order.Symbol || ''},${order.Action || ''},${order.Quantity || ''},${order.Price || ''},${order.Amount},${order.Status},${order.Date}`
+            ).join('\n');
+
+            res.setHeader('Content-Type', 'text/csv');
+            res.setHeader('Content-Disposition', `attachment; filename="swiftxchange-orders-${new Date().toISOString().split('T')[0]}.csv"`);
+            res.send(csvHeader + csvData);
+        } else {
+            res.json({ success: true, orders });
+        }
+
+    } catch (err) {
+        console.error('Export error:', err);
+        res.json({ success: false, message: "Failed to export orders" });
+    }
+});
+
+// Get account balance and info
+app.get('/api/account/info', authRequired, async (req, res) => {
+    try {
+        const userId = req.session.userId;
+        const accountType = req.session.accountType || 'demo';
+
+        const [account] = await pool.execute(
+            'SELECT account_number, account_type, balance, currency FROM trading_accounts WHERE user_id = ? AND account_type = ?',
+            [userId, accountType]
+        );
+
+        if (account.length === 0) {
+            return res.json({ success: false, message: "Account not found" });
+        }
+
+        res.json({ success: true, account: account[0] });
+
+    } catch (err) {
+        console.error('Account info error:', err);
+        res.json({ success: false, message: "Failed to fetch account info" });
+    }
+});
 
 
 // Authentication middleware (if you don't have one)
@@ -1368,6 +1789,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

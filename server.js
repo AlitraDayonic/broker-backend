@@ -1728,6 +1728,68 @@ app.get('/api/admin/dashboard-stats', authRequired, async (req, res) => {
     }
 });
 
+app.get('/api/admin/trades', authRequired, async (req, res) => {
+    try {
+        if (!req.session.isAdmin) {
+            return res.json({ success: false, message: "Admin access required" });
+        }
+
+        const [trades] = await pool.execute(`
+            SELECT t.*, u.first_name, u.last_name, u.email 
+            FROM trades t 
+            JOIN users u ON t.user_id = u.id 
+            ORDER BY t.created_at DESC
+        `);
+
+        res.json({ success: true, trades });
+    } catch (error) {
+        console.error('Admin trades error:', error);
+        res.json({ success: false, message: 'Failed to fetch trades' });
+    }
+});
+
+// Get all deposits for admin
+app.get('/api/admin/deposits', authRequired, async (req, res) => {
+    try {
+        if (!req.session.isAdmin) {
+            return res.json({ success: false, message: "Admin access required" });
+        }
+
+        const [deposits] = await pool.execute(`
+            SELECT d.*, u.first_name, u.last_name, u.email 
+            FROM deposits d 
+            JOIN users u ON d.user_id = u.id 
+            ORDER BY d.created_at DESC
+        `);
+
+        res.json({ success: true, deposits });
+    } catch (error) {
+        console.error('Admin deposits error:', error);
+        res.json({ success: false, message: 'Failed to fetch deposits' });
+    }
+});
+
+// Get all withdrawals for admin  
+app.get('/api/admin/withdrawals', authRequired, async (req, res) => {
+    try {
+        if (!req.session.isAdmin) {
+            return res.json({ success: false, message: "Admin access required" });
+        }
+
+        const [withdrawals] = await pool.execute(`
+            SELECT w.*, u.first_name, u.last_name, u.email 
+            FROM withdrawals w 
+            JOIN users u ON w.user_id = u.id 
+            ORDER BY w.created_at DESC
+        `);
+
+        res.json({ success: true, withdrawals });
+    } catch (error) {
+        console.error('Admin withdrawals error:', error);
+        res.json({ success: false, message: 'Failed to fetch withdrawals' });
+    }
+});
+
 // Admin endpoint to update user balance
 app.post('/api/admin/update-balance', authRequired, async (req, res) => {
     try {
@@ -1747,6 +1809,70 @@ app.post('/api/admin/update-balance', authRequired, async (req, res) => {
     } catch (error) {
         console.error('Error updating balance:', error);
         res.json({ success: false, message: "Failed to update balance" });
+    }
+});
+
+// Update deposit status
+app.post('/api/admin/update-deposit-status', authRequired, async (req, res) => {
+    try {
+        if (!req.session.isAdmin) {
+            return res.json({ success: false, message: "Admin access required" });
+        }
+
+        const { depositId, status } = req.body;
+        
+        await pool.execute(
+            'UPDATE deposits SET status = ? WHERE id = ?',
+            [status, depositId]
+        );
+
+        // If approved, update user balance
+        if (status === 'completed') {
+            const [deposit] = await pool.execute('SELECT * FROM deposits WHERE id = ?', [depositId]);
+            if (deposit[0]) {
+                await pool.execute(
+                    'UPDATE trading_accounts SET balance = balance + ? WHERE user_id = ?',
+                    [deposit[0].amount, deposit[0].user_id]
+                );
+            }
+        }
+
+        res.json({ success: true, message: `Deposit ${status} successfully` });
+    } catch (error) {
+        console.error('Update deposit status error:', error);
+        res.json({ success: false, message: 'Failed to update deposit status' });
+    }
+});
+
+// Update withdrawal status
+app.post('/api/admin/update-withdrawal-status', authRequired, async (req, res) => {
+    try {
+        if (!req.session.isAdmin) {
+            return res.json({ success: false, message: "Admin access required" });
+        }
+
+        const { withdrawalId, status } = req.body;
+        
+        await pool.execute(
+            'UPDATE withdrawals SET status = ? WHERE id = ?',
+            [status, withdrawalId]
+        );
+
+        // If rejected, refund balance
+        if (status === 'failed') {
+            const [withdrawal] = await pool.execute('SELECT * FROM withdrawals WHERE id = ?', [withdrawalId]);
+            if (withdrawal[0]) {
+                await pool.execute(
+                    'UPDATE trading_accounts SET balance = balance + ? WHERE user_id = ?',
+                    [withdrawal[0].amount, withdrawal[0].user_id]
+                );
+            }
+        }
+
+        res.json({ success: true, message: `Withdrawal ${status} successfully` });
+    } catch (error) {
+        console.error('Update withdrawal status error:', error);
+        res.json({ success: false, message: 'Failed to update withdrawal status' });
     }
 });
 
@@ -1789,6 +1915,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
    console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
 });
+
 
 
 

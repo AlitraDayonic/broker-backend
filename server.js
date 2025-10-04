@@ -1,34 +1,29 @@
-// SwiftXchangerate.com Complete Backend (Session-based)
+// SwiftXchangerate.com Complete Backend (Session-based) - PostgreSQL Version
 // Copy-paste ready ✅
 
 const express = require('express');
-const mysql = require('mysql2/promise');
+const { Pool } = require('pg');
 const bcrypt = require('bcrypt');
 const cors = require('cors');
 const path = require('path');
 const session = require('express-session');
-const MySQLStore = require('express-mysql-session')(session);
+const pgSession = require('connect-pg-simple')(session);
 const nodemailer = require('nodemailer');
 require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-
-
-
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use('/admin', express.static('admin'));
-app.use(express.static('public')); // serve frontend
+app.use(express.static('public'));
 
-// Always prefer MYSQL_URL
-if (!process.env.MYSQL_URL) {
-  throw new Error("❌ MYSQL_URL not set in environment!");
+// Always prefer DATABASE_URL (standard for PostgreSQL)
+if (!process.env.DATABASE_URL) {
+  throw new Error("❌ DATABASE_URL not set in environment!");
 }
-// const helmet = require('helmet');
-// const rateLimit = require('express-rate-limit');
 
 if (process.env.NODE_ENV === 'production') {
   app.set('trust proxy', 1);
@@ -37,33 +32,33 @@ if (process.env.NODE_ENV === 'production') {
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'https://swiftxchangepro.netlify.app';
 
 app.use(cors({
-  origin: 'https://swiftxchangepro.netlify.app', // Your exact Netlify URL
+  origin: 'https://swiftxchangepro.netlify.app',
   credentials: true,
   methods: ['GET','POST','PUT','DELETE','OPTIONS']
 }));
 
+// PostgreSQL Connection pool
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+});
 
-// const limiter = rateLimit({
- // windowMs: 60 * 1000, // 1 minute
- // max: 30, // limit requests per minute
-// });
-// app.use(limiter);
-
-
-// Connection pool
-const pool = mysql.createPool(process.env.MYSQL_URL);
-
-
-
-
+// Test database connection
+pool.query('SELECT NOW()', (err, res) => {
+  if (err) {
+    console.error('❌ Database connection error:', err);
+  } else {
+    console.log('✅ PostgreSQL connected successfully');
+  }
+});
 
 // Initialize tables if missing
 async function initializeDatabase() {
     try {
         // Create users table
-        await pool.execute(`
+        await pool.query(`
             CREATE TABLE IF NOT EXISTS users (
-                id INT PRIMARY KEY AUTO_INCREMENT,
+                id SERIAL PRIMARY KEY,
                 first_name VARCHAR(50) NOT NULL,
                 last_name VARCHAR(50) NOT NULL,
                 username VARCHAR(50) UNIQUE NOT NULL,
@@ -73,187 +68,159 @@ async function initializeDatabase() {
                 password_hash VARCHAR(255) NOT NULL,
                 verification_code VARCHAR(10),
                 email_verified BOOLEAN DEFAULT FALSE,
-                status ENUM('pending', 'active', 'suspended') DEFAULT 'pending',
-                role ENUM('user', 'admin') DEFAULT 'user',
+                status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'active', 'suspended')),
+                role VARCHAR(20) DEFAULT 'user' CHECK (role IN ('user', 'admin')),
                 failed_logins INT DEFAULT 0,
-                last_login_at TIMESTAMP NULL,
+                last_login_at TIMESTAMP,
                 last_login_ip VARCHAR(45),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         `);
       
-      // User profiles
-        await pool.execute(`
+        // User profiles
+        await pool.query(`
             CREATE TABLE IF NOT EXISTS user_profiles (
-                id INT PRIMARY KEY AUTO_INCREMENT,
+                id SERIAL PRIMARY KEY,
                 user_id INT NOT NULL,
-                account_type ENUM('demo', 'live') DEFAULT 'demo',
+                account_type VARCHAR(20) DEFAULT 'demo' CHECK (account_type IN ('demo', 'live')),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
         `);
 
         // Trading accounts
-        await pool.execute(`
+        await pool.query(`
             CREATE TABLE IF NOT EXISTS trading_accounts (
-                id INT PRIMARY KEY AUTO_INCREMENT,
+                id SERIAL PRIMARY KEY,
                 user_id INT NOT NULL,
                 account_number VARCHAR(50) UNIQUE NOT NULL,
-                account_type ENUM('demo', 'live') DEFAULT 'demo',
+                account_type VARCHAR(20) DEFAULT 'demo' CHECK (account_type IN ('demo', 'live')),
                 balance DECIMAL(15,2) DEFAULT 10000,
                 currency VARCHAR(3) DEFAULT 'USD',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
         `);
-        
 
         // Trades
-await pool.execute(`
-    CREATE TABLE IF NOT EXISTS trades (
-        id INT PRIMARY KEY AUTO_INCREMENT,
-        user_id INT NOT NULL,
-        account_id INT NOT NULL,
-        asset VARCHAR(50) NOT NULL,
-        asset_name VARCHAR(100),
-        quantity DECIMAL(15,8) NOT NULL,
-        price DECIMAL(15,2) NOT NULL,
-        total_amount DECIMAL(15,2) NOT NULL,
-        trade_type ENUM('buy','sell') NOT NULL,
-        status ENUM('pending','completed','failed') DEFAULT 'completed',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-        FOREIGN KEY (account_id) REFERENCES trading_accounts(id) ON DELETE CASCADE
-    )
-`);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS trades (
+                id SERIAL PRIMARY KEY,
+                user_id INT NOT NULL,
+                account_id INT NOT NULL,
+                asset VARCHAR(50) NOT NULL,
+                asset_name VARCHAR(100),
+                quantity DECIMAL(15,8) NOT NULL,
+                price DECIMAL(15,2) NOT NULL,
+                total_amount DECIMAL(15,2) NOT NULL,
+                trade_type VARCHAR(10) NOT NULL CHECK (trade_type IN ('buy','sell')),
+                status VARCHAR(20) DEFAULT 'completed' CHECK (status IN ('pending','completed','failed')),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (account_id) REFERENCES trading_accounts(id) ON DELETE CASCADE
+            )
+        `);
 
-
-
-
-        // Optional: add deposits table
-        await pool.execute(`
+        // Deposits table
+        await pool.query(`
             CREATE TABLE IF NOT EXISTS deposits (
-                id INT PRIMARY KEY AUTO_INCREMENT,
+                id SERIAL PRIMARY KEY,
                 user_id INT NOT NULL,
                 account_id INT NOT NULL,
                 amount DECIMAL(15,2) NOT NULL,
                 currency VARCHAR(3) DEFAULT 'USD',
                 payment_method VARCHAR(50),
                 reference_number VARCHAR(100),
-                status ENUM('pending', 'completed', 'failed') DEFAULT 'pending',
+                status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'failed')),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
                 FOREIGN KEY (account_id) REFERENCES trading_accounts(id) ON DELETE CASCADE
             )
         `);
 
-        // Optional: add withdrawals table
-        await pool.execute(`
+        // Withdrawals table
+        await pool.query(`
             CREATE TABLE IF NOT EXISTS withdrawals (
-                id INT PRIMARY KEY AUTO_INCREMENT,
+                id SERIAL PRIMARY KEY,
                 user_id INT NOT NULL,
                 account_id INT NOT NULL,
                 amount DECIMAL(15,2) NOT NULL,
                 currency VARCHAR(3) DEFAULT 'USD',
                 payment_method VARCHAR(50),
-                bank_details JSON,
+                bank_details JSONB,
                 reference_number VARCHAR(100),
-                status ENUM('pending', 'completed', 'failed') DEFAULT 'pending',
+                status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'failed')),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
                 FOREIGN KEY (account_id) REFERENCES trading_accounts(id) ON DELETE CASCADE
             )
         `);
 
-      // Support tickets table
-await pool.execute(`
-    CREATE TABLE IF NOT EXISTS support_tickets (
-        id INT PRIMARY KEY AUTO_INCREMENT,
-        user_id INT NOT NULL,
-        ticket_number VARCHAR(20) UNIQUE NOT NULL,
-        subject VARCHAR(200) NOT NULL,
-        category ENUM('technical', 'account', 'trading', 'billing', 'general') DEFAULT 'general',
-        priority ENUM('low', 'medium', 'high', 'urgent') DEFAULT 'medium',
-        status ENUM('open', 'in_progress', 'waiting_response', 'resolved', 'closed') DEFAULT 'open',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    )
-`);
-
-// Support messages (for ticket conversations)
-await pool.execute(`
-    CREATE TABLE IF NOT EXISTS support_messages (
-        id INT PRIMARY KEY AUTO_INCREMENT,
-        ticket_id INT NOT NULL,
-        sender_id INT NOT NULL,
-        sender_type ENUM('user', 'admin') NOT NULL,
-        message TEXT NOT NULL,
-        attachments JSON,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (ticket_id) REFERENCES support_tickets(id) ON DELETE CASCADE,
-        FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE
-    )
-`);
-
-// Knowledge base articles
-await pool.execute(`
-    CREATE TABLE IF NOT EXISTS kb_articles (
-        id INT PRIMARY KEY AUTO_INCREMENT,
-        title VARCHAR(200) NOT NULL,
-        slug VARCHAR(200) UNIQUE NOT NULL,
-        content TEXT NOT NULL,
-        category VARCHAR(100),
-        tags JSON,
-        status ENUM('draft', 'published') DEFAULT 'published',
-        views INT DEFAULT 0,
-        helpful_votes INT DEFAULT 0,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-    )
-`);
-
-      
-
-        console.log('✅ Database tables initialized successfully');
-    } catch (error) {
-        console.error('❌ Database initialization error:', error);
-    }
-}
-
-// Add this after your pool creation in server.js
-async function initializeDatabase() {
-    try {
-        // Check if "role" column exists
-        const [rows] = await pool.execute(`
-            SHOW COLUMNS FROM users LIKE 'role'
+        // Support tickets table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS support_tickets (
+                id SERIAL PRIMARY KEY,
+                user_id INT NOT NULL,
+                ticket_number VARCHAR(20) UNIQUE NOT NULL,
+                subject VARCHAR(200) NOT NULL,
+                category VARCHAR(20) DEFAULT 'general' CHECK (category IN ('technical', 'account', 'trading', 'billing', 'general')),
+                priority VARCHAR(20) DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high', 'urgent')),
+                status VARCHAR(20) DEFAULT 'open' CHECK (status IN ('open', 'in_progress', 'waiting_response', 'resolved', 'closed')),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
         `);
 
-        if (rows.length === 0) {
-            await pool.execute(`
-                ALTER TABLE users 
-                ADD COLUMN role ENUM('user', 'admin') DEFAULT 'user'
-            `);
-            console.log('✅ Role column added to users table');
-        } else {
-            console.log('ℹ️ Role column already exists');
-        }
+        // Support messages
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS support_messages (
+                id SERIAL PRIMARY KEY,
+                ticket_id INT NOT NULL,
+                sender_id INT NOT NULL,
+                sender_type VARCHAR(10) NOT NULL CHECK (sender_type IN ('user', 'admin')),
+                message TEXT NOT NULL,
+                attachments JSONB,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (ticket_id) REFERENCES support_tickets(id) ON DELETE CASCADE,
+                FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        `);
 
-        // Ensure your account is admin
-       const [adminExists] = await pool.execute(
-            "SELECT id FROM users WHERE email = 'swiftxchangepro@gmail.com'"
+        // Knowledge base articles
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS kb_articles (
+                id SERIAL PRIMARY KEY,
+                title VARCHAR(200) NOT NULL,
+                slug VARCHAR(200) UNIQUE NOT NULL,
+                content TEXT NOT NULL,
+                category VARCHAR(100),
+                tags JSONB,
+                status VARCHAR(20) DEFAULT 'published' CHECK (status IN ('draft', 'published')),
+                views INT DEFAULT 0,
+                helpful_votes INT DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        // Ensure admin user exists
+        const adminExists = await pool.query(
+            "SELECT id FROM users WHERE email = $1",
+            ['swiftxchangepro@gmail.com']
         );
 
-        if (adminExists.length === 0) {
+        if (adminExists.rows.length === 0) {
             console.log('🔧 Creating default admin user...');
-            const defaultPassword = 'AdminPass123!'; // Change this!
+            const defaultPassword = 'AdminPass123!';
             const hashedPassword = await bcrypt.hash(defaultPassword, 12);
 
-            await pool.execute(`
+            await pool.query(`
                 INSERT INTO users (
                     first_name, last_name, username, email, 
                     password_hash, email_verified, status, role, failed_logins
-                ) VALUES (?, ?, ?, ?, ?, 1, 'active', 'admin', 0)
+                ) VALUES ($1, $2, $3, $4, $5, true, 'active', 'admin', 0)
             `, [
                 'Super', 'Admin', 'superadmin', 'swiftxchangepro@gmail.com', 
                 hashedPassword
@@ -264,12 +231,11 @@ async function initializeDatabase() {
             console.log('🔑 Password: AdminPass123!');
             console.log('⚠️  CHANGE THIS PASSWORD IMMEDIATELY!');
         } else {
-            // Ensure existing user has admin role
-            await pool.execute(`
+            await pool.query(`
                 UPDATE users 
                 SET role = 'admin' 
-                WHERE email = 'swiftxchangepro@gmail.com'
-            `);
+                WHERE email = $1
+            `, ['swiftxchangepro@gmail.com']);
             console.log('✅ Admin role updated for existing user');
         }
 
@@ -278,41 +244,28 @@ async function initializeDatabase() {
         console.error('❌ Database initialization error:', error);
     }
 }
+
 // Call at startup
 initializeDatabase();
 
-
-
-
-// Parse the MySQL URL from Railway (e.g. mysql://root:pass@host:port/dbname)
-const mysql_url = new URL(process.env.MYSQL_URL || 'mysql://root:@localhost:3306/test');
-
-// Session store using parsed values
-const sessionStore = new MySQLStore({
-    host: mysql_url.hostname,                  // e.g. trolley.proxy.rlwy.net
-    port: mysql_url.port,                      // e.g. 55683
-    user: mysql_url.username,                  // e.g. root
-    password: mysql_url.password,              // your MySQL password
-    database: mysql_url.pathname.slice(1),     // remove leading "/" from "/railway"
-    createDatabaseTable: true
-}, pool);
-
-
+// Session store using PostgreSQL
 app.use(session({
-    key: 'swiftx_session',
+    store: new pgSession({
+        pool: pool,
+        tableName: 'session'
+    }),
     secret: process.env.SESSION_SECRET || 'supersecret',
-    store: sessionStore,
     resave: false,
     saveUninitialized: false,
     cookie: {
         maxAge: 24 * 60 * 60 * 1000,
         secure: true,
         sameSite: 'none',
-        httpOnly: true,  // Change to false temporarily for testing
+        httpOnly: true
     }
 }));
 
-// Email transporter - manual Gmail configuration (no service override)
+// Email transporter
 const emailTransporter = nodemailer.createTransport({
     host: 'smtp.gmail.com',
     port: 465,
@@ -329,17 +282,15 @@ const emailTransporter = nodemailer.createTransport({
     socketTimeout: 60000
 });
 
-// Test email connection (but don't block startup if it fails)
 emailTransporter.verify((error, success) => {
     if (error) {
         console.log('❌ Email configuration error:', error.message);
-        console.log('💡 Email will be attempted during actual sending');
     } else {
         console.log('✅ Email server is ready');
     }
 });
 
-// Helpers
+// Helper functions
 function generateVerificationCode() {
     return Math.floor(100000 + Math.random() * 900000).toString();
 }
@@ -374,38 +325,41 @@ function authRequired(req, res, next) {
     next();
 }
 
-
-
-
-
-
 // ------------------- ROUTES -------------------
-
-
 
 // Register
 app.post('/api/register', async (req, res) => {
     const { firstName, lastName, username, email, phone, country, accountType, password } = req.body;
     try {
-        const [existing] = await pool.execute("SELECT id FROM users WHERE email = ? OR username = ?", [email, username]);
-        if (existing.length > 0) return res.json({ success: false, message: "Email or username already in use" });
+        const existing = await pool.query(
+            "SELECT id FROM users WHERE email = $1 OR username = $2", 
+            [email, username]
+        );
+        
+        if (existing.rows.length > 0) {
+            return res.json({ success: false, message: "Email or username already in use" });
+        }
 
         const hash = await bcrypt.hash(password, 12);
         const code = generateVerificationCode();
 
-        const [result] = await pool.execute(
-            "INSERT INTO users (first_name, last_name, username, email, phone, country, password_hash, verification_code, status, failed_logins) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0)",
+        const result = await pool.query(
+            "INSERT INTO users (first_name, last_name, username, email, phone, country, password_hash, verification_code, status, failed_logins) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', 0) RETURNING id",
             [firstName, lastName, username, email, phone, country, hash, code]
         );
 
-        const userId = result.insertId;
-        await pool.execute("INSERT INTO user_profiles (user_id, account_type) VALUES (?, ?)", [userId, accountType || 'demo']);
-       const startingBalance = accountType === 'live' ? 0 : 10000; 
-      await pool.execute( 
-        "INSERT INTO trading_accounts (user_id, account_number, account_type, balance, currency) VALUES (?, ?, ?, ?, 'USD')", 
-        [userId, generateAccountNumber(), accountType || 'demo', startingBalance] );
-
-        // await sendVerificationEmail(email, code, firstName);
+        const userId = result.rows[0].id;
+        
+        await pool.query(
+            "INSERT INTO user_profiles (user_id, account_type) VALUES ($1, $2)", 
+            [userId, accountType || 'demo']
+        );
+        
+        const startingBalance = accountType === 'live' ? 0 : 10000;
+        await pool.query(
+            "INSERT INTO trading_accounts (user_id, account_number, account_type, balance, currency) VALUES ($1, $2, $3, $4, 'USD')", 
+            [userId, generateAccountNumber(), accountType || 'demo', startingBalance]
+        );
 
         res.json({ success: true, message: "Registered successfully. Please verify your email." });
     } catch (err) {
@@ -418,12 +372,24 @@ app.post('/api/register', async (req, res) => {
 app.post('/api/verify-email', async (req, res) => {
     const { email, code } = req.body;
     try {
-        const [rows] = await pool.execute("SELECT id, verification_code FROM users WHERE email = ? AND status = 'pending'", [email]);
-        if (rows.length === 0) return res.json({ success: false, message: "Invalid request" });
+        const result = await pool.query(
+            "SELECT id, verification_code FROM users WHERE email = $1 AND status = 'pending'", 
+            [email]
+        );
+        
+        if (result.rows.length === 0) {
+            return res.json({ success: false, message: "Invalid request" });
+        }
 
-        if (rows[0].verification_code !== code) return res.json({ success: false, message: "Invalid code" });
+        if (result.rows[0].verification_code !== code) {
+            return res.json({ success: false, message: "Invalid code" });
+        }
 
-        await pool.execute("UPDATE users SET email_verified=1, status='active', verification_code=NULL WHERE id=?", [rows[0].id]);
+        await pool.query(
+            "UPDATE users SET email_verified = true, status = 'active', verification_code = NULL WHERE id = $1", 
+            [result.rows[0].id]
+        );
+        
         res.json({ success: true, message: "Email verified successfully" });
     } catch (err) {
         console.error(err);
@@ -431,61 +397,54 @@ app.post('/api/verify-email', async (req, res) => {
     }
 });
 
-
 // Login endpoint
 app.post('/api/login', async (req, res) => {
     const { email, password, accountType } = req.body;
     
     try {
-        // 1. Find user by email
-        const [rows] = await pool.execute("SELECT * FROM users WHERE email = ?", [email]);
+        const result = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
         
-        if (rows.length === 0) {
+        if (result.rows.length === 0) {
             return res.json({ success: false, message: "Invalid email or password" });
         }
         
-        const user = rows[0];
-        
-        // 2. Verify password
+        const user = result.rows[0];
         const valid = await bcrypt.compare(password, user.password_hash);
         
         if (!valid) {
-            await pool.execute("UPDATE users SET failed_logins = failed_logins + 1 WHERE id = ?", [user.id]);
+            await pool.query(
+                "UPDATE users SET failed_logins = failed_logins + 1 WHERE id = $1", 
+                [user.id]
+            );
             return res.json({ success: false, message: "Invalid email or password" });
         }
         
-        // 3. Determine account type
         let finalAccountType = accountType && ['demo', 'live'].includes(accountType) ? accountType : 'demo';
         
-        // 4. Handle trading account
         try {
-            const [existingAccount] = await pool.execute(
-                "SELECT id FROM trading_accounts WHERE user_id = ?", 
+            const existingAccount = await pool.query(
+                "SELECT id FROM trading_accounts WHERE user_id = $1", 
                 [user.id]
             );
             
-            if (existingAccount.length > 0) {
-                // Update existing account type
-                await pool.execute(
-                    "UPDATE trading_accounts SET account_type = ?, updated_at = NOW() WHERE user_id = ?", 
+            if (existingAccount.rows.length > 0) {
+                await pool.query(
+                    "UPDATE trading_accounts SET account_type = $1, updated_at = NOW() WHERE user_id = $2", 
                     [finalAccountType, user.id]
                 );
             } else {
-                // Create new trading account
                 const accountNumber = 'SXR' + Date.now().toString() + Math.floor(Math.random() * 1000);
                 const initialBalance = finalAccountType === 'demo' ? 10000 : 0;
                 
-                await pool.execute(
-                    "INSERT INTO trading_accounts (user_id, account_number, account_type, balance, currency, created_at, updated_at) VALUES (?, ?, ?, ?, 'USD', NOW(), NOW())", 
+                await pool.query(
+                    "INSERT INTO trading_accounts (user_id, account_number, account_type, balance, currency, created_at, updated_at) VALUES ($1, $2, $3, $4, 'USD', NOW(), NOW())", 
                     [user.id, accountNumber, finalAccountType, initialBalance]
                 );
             }
         } catch (accountError) {
             console.error('Trading account error:', accountError);
-            // Continue with login even if account creation fails
         }
         
-        // 5. Set session data and save
         req.session.userId = user.id;
         req.session.userEmail = user.email;
         req.session.accountType = finalAccountType;
@@ -496,13 +455,11 @@ app.post('/api/login', async (req, res) => {
                 return res.json({ success: false, message: 'Login failed - session error' });
             }
             
-            // 6. Update user login statistics
-            pool.execute(
-                "UPDATE users SET failed_logins = 0, last_login_at = NOW(), last_login_ip = ? WHERE id = ?", 
+            pool.query(
+                "UPDATE users SET failed_logins = 0, last_login_at = NOW(), last_login_ip = $1 WHERE id = $2", 
                 [req.ip, user.id]
             ).catch(console.error);
             
-            // 7. Send success response
             res.json({ 
                 success: true, 
                 message: `Login successful with ${finalAccountType} account`, 
@@ -523,29 +480,24 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
-
-
-// Add this endpoint to your server.js for account switching
+// Switch account
 app.post('/api/switch-account', authRequired, async (req, res) => {
     const { accountType } = req.body;
     
     try {
-        // Update session
         req.session.accountType = accountType;
         
-        // Check if account exists for this type
-        const [existingAccount] = await pool.execute(
-            "SELECT id FROM trading_accounts WHERE user_id = ? AND account_type = ?", 
+        const existingAccount = await pool.query(
+            "SELECT id FROM trading_accounts WHERE user_id = $1 AND account_type = $2", 
             [req.session.userId, accountType]
         );
         
-        if (existingAccount.length === 0) {
-            // Create new account if doesn't exist
+        if (existingAccount.rows.length === 0) {
             const accountNumber = 'SXR' + Date.now().toString() + Math.floor(Math.random() * 1000);
             const initialBalance = accountType === 'demo' ? 10000 : 0;
             
-            await pool.execute(
-                "INSERT INTO trading_accounts (user_id, account_number, account_type, balance, currency) VALUES (?, ?, ?, ?, 'USD')", 
+            await pool.query(
+                "INSERT INTO trading_accounts (user_id, account_number, account_type, balance, currency) VALUES ($1, $2, $3, $4, 'USD')", 
                 [req.session.userId, accountNumber, accountType, initialBalance]
             );
         }
@@ -557,31 +509,33 @@ app.post('/api/switch-account', authRequired, async (req, res) => {
     }
 });
 
-
-
-// Temporary admin registration endpoint (remove after creating admin)
+// Admin registration
 app.post('/api/register-admin', async (req, res) => {
     const { firstName, lastName, username, email, password } = req.body;
     
     try {
-        // Check if admin already exists
-        const [existing] = await pool.execute("SELECT id FROM users WHERE email = ? OR role = 'admin'", [email]);
-        if (existing.length > 0) {
+        const existing = await pool.query(
+            "SELECT id FROM users WHERE email = $1 OR role = 'admin'", 
+            [email]
+        );
+        
+        if (existing.rows.length > 0) {
             return res.json({ success: false, message: "Admin user already exists" });
         }
 
         const hash = await bcrypt.hash(password, 12);
 
-        // Create admin user directly (no email verification needed)
-        const [result] = await pool.execute(
-            "INSERT INTO users (first_name, last_name, username, email, password_hash, email_verified, status, role, failed_logins) VALUES (?, ?, ?, ?, ?, 1, 'active', 'admin', 0)",
+        const result = await pool.query(
+            "INSERT INTO users (first_name, last_name, username, email, password_hash, email_verified, status, role, failed_logins) VALUES ($1, $2, $3, $4, $5, true, 'active', 'admin', 0) RETURNING id",
             [firstName, lastName, username, email, hash]
         );
 
-        // Create admin profile and trading account
-        const userId = result.insertId;
-        await pool.execute("INSERT INTO user_profiles (user_id, account_type) VALUES (?, 'admin')", [userId]);
-        await pool.execute("INSERT INTO trading_accounts (user_id, account_number, account_type, balance, currency) VALUES (?, ?, 'admin', 100000, 'USD')", [userId, generateAccountNumber()]);
+        const userId = result.rows[0].id;
+        await pool.query("INSERT INTO user_profiles (user_id, account_type) VALUES ($1, 'admin')", [userId]);
+        await pool.query(
+            "INSERT INTO trading_accounts (user_id, account_number, account_type, balance, currency) VALUES ($1, $2, 'admin', 100000, 'USD')", 
+            [userId, generateAccountNumber()]
+        );
 
         res.json({ success: true, message: "Admin user created successfully" });
     } catch (err) {
@@ -590,65 +544,61 @@ app.post('/api/register-admin', async (req, res) => {
     }
 });
 
-
-// Replace your /api/admin-login endpoint with this version:
+// Admin login
 app.post('/api/admin-login', async (req, res) => {
     const { email, password } = req.body;
     
     console.log('🔐 Admin login attempt:', email);
     
     try {
-        // First check if user exists
-        const [rows] = await pool.execute("SELECT * FROM users WHERE email = ?", [email]);
+        const result = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
         
-        if (rows.length === 0) {
+        if (result.rows.length === 0) {
             console.log('❌ No user found with email:', email);
             return res.json({ success: false, message: "Invalid admin credentials" });
         }
         
-        const user = rows[0];
+        const user = result.rows[0];
         console.log('👤 User found:', { id: user.id, email: user.email, role: user.role });
         
-        // Check if user is admin
         if (user.role !== 'admin') {
             console.log('❌ User is not admin, role:', user.role);
             return res.json({ success: false, message: "Admin access required" });
         }
         
-        // Verify password
         const valid = await bcrypt.compare(password, user.password_hash);
         if (!valid) {
             console.log('❌ Invalid password for:', email);
-            await pool.execute("UPDATE users SET failed_logins = failed_logins + 1 WHERE id=?", [user.id]);
+            await pool.query(
+                "UPDATE users SET failed_logins = failed_logins + 1 WHERE id = $1", 
+                [user.id]
+            );
             return res.json({ success: false, message: "Invalid admin credentials" });
         }
         
         console.log('✅ Password valid, setting session data');
         
-        // Set session data
         req.session.userId = user.id;
         req.session.userEmail = user.email;
         req.session.isAdmin = true;
         req.session.role = 'admin';
         
-        // Save session explicitly and wait for it
         await new Promise((resolve, reject) => {
             req.session.save((err) => {
                 if (err) {
                     console.error('❌ Session save error:', err);
                     reject(err);
                 } else {
-                    console.log('✅ Session saved successfully:', {
-                        sessionId: req.sessionID,
-                        userId: user.id,
-                        isAdmin: true
-                    });
+                    console.log('✅ Session saved successfully');
                     resolve();
                 }
             });
         });
         
-        await pool.execute("UPDATE users SET failed_logins=0, last_login_at=NOW(), last_login_ip=? WHERE id=?", [req.ip, user.id]);
+        await pool.query(
+            "UPDATE users SET failed_logins = 0, last_login_at = NOW(), last_login_ip = $1 WHERE id = $2", 
+            [req.ip, user.id]
+        );
         
         res.json({ 
             success: true, 
@@ -674,21 +624,18 @@ app.post('/api/support/tickets', authRequired, async (req, res) => {
         const { subject, category, priority, message } = req.body;
         const userId = req.session.userId;
         
-        // Generate unique ticket number
         const ticketNumber = 'TK' + Date.now().toString().slice(-8);
         
-        // Create ticket
-        const [ticketResult] = await pool.execute(`
+        const ticketResult = await pool.query(`
             INSERT INTO support_tickets (user_id, ticket_number, subject, category, priority)
-            VALUES (?, ?, ?, ?, ?)
+            VALUES ($1, $2, $3, $4, $5) RETURNING id
         `, [userId, ticketNumber, subject, category, priority]);
         
-        const ticketId = ticketResult.insertId;
+        const ticketId = ticketResult.rows[0].id;
         
-        // Add first message
-        await pool.execute(`
+        await pool.query(`
             INSERT INTO support_messages (ticket_id, sender_id, sender_type, message)
-            VALUES (?, ?, 'user', ?)
+            VALUES ($1, $2, 'user', $3)
         `, [ticketId, userId, message]);
         
         res.json({ success: true, ticketNumber, ticketId });
@@ -704,7 +651,6 @@ app.get('/api/crypto-data/:symbol', async (req, res) => {
         const { symbol } = req.params;
         const { interval = '1d', limit = 100 } = req.query;
         
-        // Using Binance API for crypto data (free, no API key needed)
         const binanceSymbol = symbol.replace('/', '').toUpperCase();
         const url = `https://api.binance.com/api/v3/klines?symbol=${binanceSymbol}&interval=${interval}&limit=${limit}`;
         
@@ -740,12 +686,9 @@ app.get('/api/forex-data/:pair', async (req, res) => {
         const API_KEY = process.env.ALPHA_VANTAGE_KEY || '0H7XF1OM8577OKS9';
         const url = `https://www.alphavantage.co/query?function=FX_DAILY&from_symbol=${pair.substring(0,3)}&to_symbol=${pair.substring(3,6)}&apikey=${API_KEY}`;
         
-        console.log('Fetching forex data from:', url);
-        
         const response = await fetch(url);
         const data = await response.json();
         
-        // FIXED: Correct property name
         if (data['Time Series FX (Daily)']) {
             const timeSeries = data['Time Series FX (Daily)'];
             const formattedData = Object.entries(timeSeries)
@@ -757,18 +700,14 @@ app.get('/api/forex-data/:pair', async (req, res) => {
                     low: parseFloat(values['3. low']),
                     close: parseFloat(values['4. close'])
                 }))
-                .reverse(); // Reverse to get chronological order
+                .reverse();
             
-            console.log(`Successfully formatted ${formattedData.length} forex data points for ${pair}`);
             res.json({ success: true, data: formattedData });
         } else if (data['Error Message']) {
-            console.error('Alpha Vantage error:', data['Error Message']);
             res.json({ success: false, message: data['Error Message'] });
         } else if (data['Note']) {
-            console.error('Alpha Vantage rate limit:', data['Note']);
             res.json({ success: false, message: 'Rate limit exceeded. Please try again later.' });
         } else {
-            console.error('Unexpected response structure:', data);
             res.json({ success: false, message: 'Invalid forex data format' });
         }
     } catch (error) {
@@ -777,7 +716,7 @@ app.get('/api/forex-data/:pair', async (req, res) => {
     }
 });
 
-// Live prices for multiple symbols (for mini charts and watchlist)
+// Live prices for multiple symbols
 app.get('/api/live-prices', async (req, res) => {
     try {
         const { symbols, market } = req.query;
@@ -785,7 +724,6 @@ app.get('/api/live-prices', async (req, res) => {
         const prices = {};
         
         if (market === 'crypto') {
-            // Get crypto prices from Binance
             const response = await fetch('https://api.binance.com/api/v3/ticker/24hr');
             const data = await response.json();
             
@@ -803,8 +741,6 @@ app.get('/api/live-prices', async (req, res) => {
                 }
             });
         } else if (market === 'forex') {
-            // For forex, you'd need a real-time forex API
-            // This is a simplified example - you may need a paid service for real-time forex
             const API_KEY = process.env.ALPHA_VANTAGE_KEY || 'demo';
             
             for (const pair of symbolList) {
@@ -817,7 +753,7 @@ app.get('/api/live-prices', async (req, res) => {
                         const rate = data['Realtime Currency Exchange Rate'];
                         prices[pair] = {
                             price: parseFloat(rate['5. Exchange Rate']),
-                            change: 0, // Alpha Vantage free tier doesn't provide change
+                            change: 0,
                             changePercent: 0,
                             lastUpdate: rate['6. Last Refreshed']
                         };
@@ -835,12 +771,11 @@ app.get('/api/live-prices', async (req, res) => {
     }
 });
 
-// WebSocket for real-time updates (optional but recommended)
+// Start real-time feed
 app.get('/api/start-realtime/:market', (req, res) => {
     const { market } = req.params;
     
     if (market === 'crypto') {
-        // You can implement WebSocket connection to Binance streams
         res.json({ success: true, message: 'Crypto real-time feed started' });
     } else {
         res.json({ success: true, message: 'Forex real-time feed started' });
@@ -852,16 +787,16 @@ app.get('/api/support/tickets', authRequired, async (req, res) => {
     try {
         const userId = req.session.userId;
         
-        const [tickets] = await pool.execute(`
+        const result = await pool.query(`
             SELECT st.*, 
                    (SELECT COUNT(*) FROM support_messages WHERE ticket_id = st.id) as message_count,
                    (SELECT created_at FROM support_messages WHERE ticket_id = st.id ORDER BY created_at DESC LIMIT 1) as last_message_at
             FROM support_tickets st 
-            WHERE st.user_id = ?
+            WHERE st.user_id = $1
             ORDER BY st.updated_at DESC
         `, [userId]);
         
-        res.json({ success: true, tickets });
+        res.json({ success: true, tickets: result.rows });
     } catch (error) {
         console.error('Error fetching tickets:', error);
         res.json({ success: false, message: 'Failed to fetch tickets' });
@@ -874,25 +809,24 @@ app.get('/api/support/tickets/:id/messages', authRequired, async (req, res) => {
         const ticketId = req.params.id;
         const userId = req.session.userId;
         
-        // Verify user owns this ticket or is admin
-        const [ticket] = await pool.execute(
-            'SELECT user_id FROM support_tickets WHERE id = ?', 
+        const ticket = await pool.query(
+            'SELECT user_id FROM support_tickets WHERE id = $1', 
             [ticketId]
         );
         
-        if (ticket.length === 0 || (ticket[0].user_id !== userId && !req.session.isAdmin)) {
+        if (ticket.rows.length === 0 || (ticket.rows[0].user_id !== userId && !req.session.isAdmin)) {
             return res.json({ success: false, message: 'Access denied' });
         }
         
-        const [messages] = await pool.execute(`
+        const messages = await pool.query(`
             SELECT sm.*, u.first_name, u.last_name, u.email
             FROM support_messages sm
             JOIN users u ON sm.sender_id = u.id
-            WHERE sm.ticket_id = ?
+            WHERE sm.ticket_id = $1
             ORDER BY sm.created_at ASC
         `, [ticketId]);
         
-        res.json({ success: true, messages });
+        res.json({ success: true, messages: messages.rows });
     } catch (error) {
         console.error('Error fetching messages:', error);
         res.json({ success: false, message: 'Failed to fetch messages' });
@@ -906,7 +840,7 @@ app.get('/api/admin/support/tickets', authRequired, async (req, res) => {
             return res.json({ success: false, message: 'Admin access required' });
         }
         
-        const [tickets] = await pool.execute(`
+        const tickets = await pool.query(`
             SELECT st.*, u.first_name, u.last_name, u.email,
                    (SELECT COUNT(*) FROM support_messages WHERE ticket_id = st.id) as message_count
             FROM support_tickets st
@@ -914,7 +848,7 @@ app.get('/api/admin/support/tickets', authRequired, async (req, res) => {
             ORDER BY st.updated_at DESC
         `);
         
-        res.json({ success: true, tickets });
+        res.json({ success: true, tickets: tickets.rows });
     } catch (error) {
         console.error('Error fetching admin tickets:', error);
         res.json({ success: false, message: 'Failed to fetch tickets' });
@@ -936,83 +870,69 @@ app.get('/api/kb/search', async (req, res) => {
         const params = [];
         
         if (q) {
-            query += ` AND (title LIKE ? OR content LIKE ?)`;
+            query += ` AND (title ILIKE $1 OR content ILIKE $2)`;
             params.push(`%${q}%`, `%${q}%`);
         }
         
         query += ` ORDER BY helpful_votes DESC, views DESC LIMIT 20`;
         
-        const [articles] = await pool.execute(query, params);
+        const articles = await pool.query(query, params);
         
-        res.json({ success: true, articles });
+        res.json({ success: true, articles: articles.rows });
     } catch (error) {
         console.error('Error searching knowledge base:', error);
         res.json({ success: false, message: 'Search failed' });
     }
 });
 
-
-
-// Dashboard (protected)
+// Dashboard
 app.get('/api/dashboard', authRequired, async (req, res) => {
-   try {
-        console.log('🔍 Dashboard request debug:', {
-            sessionId: req.sessionID,
-            userId: req.session.userId,
-            accountType: req.session.accountType,
-            userAgent: req.headers['user-agent']
-        });
-
-        const [user] = await pool.execute("SELECT first_name, last_name, email, status FROM users WHERE id=?", [req.session.userId]);
-        console.log('👤 User found:', user[0]);
+    try {
+        const user = await pool.query(
+            "SELECT first_name, last_name, email, status FROM users WHERE id = $1", 
+            [req.session.userId]
+        );
         
-        // Get account type from session (default to demo)
         const accountType = req.session.accountType || 'demo';
         
-        // Get specific account based on type
-        const [accounts] = await pool.execute(
-            "SELECT account_number, account_type, balance, currency FROM trading_accounts WHERE user_id=? AND account_type=?", 
+        const accounts = await pool.query(
+            "SELECT account_number, account_type, balance, currency FROM trading_accounts WHERE user_id = $1 AND account_type = $2", 
             [req.session.userId, accountType]
         );
         
-        // If no account exists for this type, create it
-        if (accounts.length === 0) {
+        if (accounts.rows.length === 0) {
             const accountNumber = 'SXR' + Date.now().toString() + Math.floor(Math.random() * 1000);
             const initialBalance = accountType === 'demo' ? 10000 : 0;
             
-            await pool.execute(
-                "INSERT INTO trading_accounts (user_id, account_number, account_type, balance, currency) VALUES (?, ?, ?, ?, 'USD')",
+            await pool.query(
+                "INSERT INTO trading_accounts (user_id, account_number, account_type, balance, currency) VALUES ($1, $2, $3, $4, 'USD')",
                 [req.session.userId, accountNumber, accountType, initialBalance]
             );
             
-            // Get the newly created account
-            const [newAccounts] = await pool.execute(
-                "SELECT account_number, account_type, balance, currency FROM trading_accounts WHERE user_id=? AND account_type=?", 
+            const newAccounts = await pool.query(
+                "SELECT account_number, account_type, balance, currency FROM trading_accounts WHERE user_id = $1 AND account_type = $2", 
                 [req.session.userId, accountType]
             );
             
-            return res.json({ success: true, user: user[0], accounts: newAccounts });
+            return res.json({ success: true, user: user.rows[0], accounts: newAccounts.rows });
         }
         
-        res.json({ success: true, user: user[0], accounts });
+        res.json({ success: true, user: user.rows[0], accounts: accounts.rows });
     } catch (err) {
         console.error(err);
         res.json({ success: false, message: "Dashboard failed" });
     }
 });
 
-/ ================= ENHANCED ORDER HISTORY ENDPOINTS ================= //
-// Add these to your server.js after your existing endpoints
-
-// Enhanced orders endpoint with filtering, pagination, and search
+// Enhanced orders endpoint
 app.get('/api/orders', authRequired, async (req, res) => {
     try {
         const userId = req.session.userId;
         const {
             page = 1,
             limit = 25,
-            type = 'all', // all, trades, deposits, withdrawals
-            status = 'all', // all, completed, pending, failed
+            type = 'all',
+            status = 'all',
             dateFrom,
             dateTo,
             search = '',
@@ -1021,38 +941,37 @@ app.get('/api/orders', authRequired, async (req, res) => {
         } = req.query;
 
         const offset = (page - 1) * limit;
-        let whereConditions = [];
-        let queryParams = [];
-
-        // Base query for different order types
         let baseQueries = [];
+        let queryParams = [];
+        let paramIndex = 1;
 
         // Trades query
         if (type === 'all' || type === 'trades') {
-            let tradeWhere = ['user_id = ?'];
+            let tradeWhere = [`user_id = ${paramIndex++}`];
             let tradeParams = [userId];
 
             if (status !== 'all') {
-                tradeWhere.push('status = ?');
+                tradeWhere.push(`status = ${paramIndex++}`);
                 tradeParams.push(status);
             }
 
             if (search) {
-                tradeWhere.push('(asset LIKE ? OR asset_name LIKE ?)');
-                tradeParams.push(`%${search}%`, `%${search}%`);
+                tradeWhere.push(`(asset ILIKE ${paramIndex} OR asset_name ILIKE ${paramIndex})`);
+                paramIndex++;
+                tradeParams.push(`%${search}%`);
             }
 
             if (dateFrom) {
-                tradeWhere.push('DATE(created_at) >= ?');
+                tradeWhere.push(`DATE(created_at) >= ${paramIndex++}`);
                 tradeParams.push(dateFrom);
             }
 
             if (dateTo) {
-                tradeWhere.push('DATE(created_at) <= ?');
+                tradeWhere.push(`DATE(created_at) <= ${paramIndex++}`);
                 tradeParams.push(dateTo);
             }
 
-            baseQueries.push(`
+            const tradeQuery = `
                 SELECT 
                     'trade' as order_type,
                     id,
@@ -1068,36 +987,39 @@ app.get('/api/orders', authRequired, async (req, res) => {
                     NULL as payment_method
                 FROM trades 
                 WHERE ${tradeWhere.join(' AND ')}
-            `);
+            `;
+            
+            baseQueries.push(tradeQuery);
             queryParams.push(...tradeParams);
         }
 
         // Deposits query
         if (type === 'all' || type === 'deposits') {
-            let depositWhere = ['user_id = ?'];
+            let depositWhere = [`user_id = ${paramIndex++}`];
             let depositParams = [userId];
 
             if (status !== 'all') {
-                depositWhere.push('status = ?');
+                depositWhere.push(`status = ${paramIndex++}`);
                 depositParams.push(status);
             }
 
             if (search) {
-                depositWhere.push('(payment_method LIKE ? OR reference_number LIKE ?)');
-                depositParams.push(`%${search}%`, `%${search}%`);
+                depositWhere.push(`(payment_method ILIKE ${paramIndex} OR reference_number ILIKE ${paramIndex})`);
+                paramIndex++;
+                depositParams.push(`%${search}%`);
             }
 
             if (dateFrom) {
-                depositWhere.push('DATE(created_at) >= ?');
+                depositWhere.push(`DATE(created_at) >= ${paramIndex++}`);
                 depositParams.push(dateFrom);
             }
 
             if (dateTo) {
-                depositWhere.push('DATE(created_at) <= ?');
+                depositWhere.push(`DATE(created_at) <= ${paramIndex++}`);
                 depositParams.push(dateTo);
             }
 
-            baseQueries.push(`
+            const depositQuery = `
                 SELECT 
                     'deposit' as order_type,
                     id,
@@ -1113,36 +1035,39 @@ app.get('/api/orders', authRequired, async (req, res) => {
                     payment_method
                 FROM deposits 
                 WHERE ${depositWhere.join(' AND ')}
-            `);
+            `;
+            
+            baseQueries.push(depositQuery);
             queryParams.push(...depositParams);
         }
 
         // Withdrawals query
         if (type === 'all' || type === 'withdrawals') {
-            let withdrawalWhere = ['user_id = ?'];
+            let withdrawalWhere = [`user_id = ${paramIndex++}`];
             let withdrawalParams = [userId];
 
             if (status !== 'all') {
-                withdrawalWhere.push('status = ?');
+                withdrawalWhere.push(`status = ${paramIndex++}`);
                 withdrawalParams.push(status);
             }
 
             if (search) {
-                withdrawalWhere.push('(payment_method LIKE ? OR reference_number LIKE ?)');
-                withdrawalParams.push(`%${search}%`, `%${search}%`);
+                withdrawalWhere.push(`(payment_method ILIKE ${paramIndex} OR reference_number ILIKE ${paramIndex})`);
+                paramIndex++;
+                withdrawalParams.push(`%${search}%`);
             }
 
             if (dateFrom) {
-                withdrawalWhere.push('DATE(created_at) >= ?');
+                withdrawalWhere.push(`DATE(created_at) >= ${paramIndex++}`);
                 withdrawalParams.push(dateFrom);
             }
 
             if (dateTo) {
-                withdrawalWhere.push('DATE(created_at) <= ?');
+                withdrawalWhere.push(`DATE(created_at) <= ${paramIndex++}`);
                 withdrawalParams.push(dateTo);
             }
 
-            baseQueries.push(`
+            const withdrawalQuery = `
                 SELECT 
                     'withdrawal' as order_type,
                     id,
@@ -1158,40 +1083,39 @@ app.get('/api/orders', authRequired, async (req, res) => {
                     payment_method
                 FROM withdrawals 
                 WHERE ${withdrawalWhere.join(' AND ')}
-            `);
+            `;
+            
+            baseQueries.push(withdrawalQuery);
             queryParams.push(...withdrawalParams);
         }
 
-        // Combine queries with UNION
+        // Combine queries
         const mainQuery = `
             SELECT * FROM (
                 ${baseQueries.join(' UNION ALL ')}
             ) AS combined_orders
             ORDER BY ${sortBy} ${sortOrder}
-            LIMIT ? OFFSET ?
+            LIMIT ${paramIndex} OFFSET ${paramIndex + 1}
         `;
 
-        // Add pagination params
         queryParams.push(parseInt(limit), parseInt(offset));
 
-        // Execute main query
-        const [orders] = await pool.execute(mainQuery, queryParams);
+        const orders = await pool.query(mainQuery, queryParams);
 
-        // Get total count for pagination
+        // Get total count
         const countQuery = `
             SELECT COUNT(*) as total FROM (
                 ${baseQueries.join(' UNION ALL ')}
             ) AS combined_orders
         `;
         
-        // Remove pagination params for count query
         const countParams = queryParams.slice(0, -2);
-        const [countResult] = await pool.execute(countQuery, countParams);
-        const total = countResult[0].total;
+        const countResult = await pool.query(countQuery, countParams);
+        const total = parseInt(countResult.rows[0].total);
 
         res.json({
             success: true,
-            orders,
+            orders: orders.rows,
             pagination: {
                 page: parseInt(page),
                 limit: parseInt(limit),
@@ -1214,47 +1138,44 @@ app.get('/api/orders/:id/:type', authRequired, async (req, res) => {
         const { id, type } = req.params;
         const userId = req.session.userId;
         
-        let query, table;
+        let query;
         
         switch(type) {
             case 'trade':
-                table = 'trades';
                 query = `
                     SELECT t.*, ta.account_number, ta.account_type 
                     FROM trades t 
                     JOIN trading_accounts ta ON t.account_id = ta.id 
-                    WHERE t.id = ? AND t.user_id = ?
+                    WHERE t.id = $1 AND t.user_id = $2
                 `;
                 break;
             case 'deposit':
-                table = 'deposits';
                 query = `
                     SELECT d.*, ta.account_number, ta.account_type 
                     FROM deposits d 
                     JOIN trading_accounts ta ON d.account_id = ta.id 
-                    WHERE d.id = ? AND d.user_id = ?
+                    WHERE d.id = $1 AND d.user_id = $2
                 `;
                 break;
             case 'withdrawal':
-                table = 'withdrawals';
                 query = `
                     SELECT w.*, ta.account_number, ta.account_type 
                     FROM withdrawals w 
                     JOIN trading_accounts ta ON w.account_id = ta.id 
-                    WHERE w.id = ? AND w.user_id = ?
+                    WHERE w.id = $1 AND w.user_id = $2
                 `;
                 break;
             default:
                 return res.json({ success: false, message: "Invalid order type" });
         }
 
-        const [orders] = await pool.execute(query, [id, userId]);
+        const orders = await pool.query(query, [id, userId]);
         
-        if (orders.length === 0) {
+        if (orders.rows.length === 0) {
             return res.json({ success: false, message: "Order not found" });
         }
 
-        res.json({ success: true, order: orders[0], type });
+        res.json({ success: true, order: orders.rows[0], type });
         
     } catch (err) {
         console.error('Order details error:', err);
@@ -1262,47 +1183,43 @@ app.get('/api/orders/:id/:type', authRequired, async (req, res) => {
     }
 });
 
-// Order statistics for dashboard widgets
+// Order statistics
 app.get('/api/orders/stats', authRequired, async (req, res) => {
     try {
         const userId = req.session.userId;
-        const { period = '30' } = req.query; // days
+        const { period = '30' } = req.query;
 
-        // Total trades
-        const [tradesCount] = await pool.execute(
-            'SELECT COUNT(*) as count FROM trades WHERE user_id = ? AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)',
+        const tradesCount = await pool.query(
+            'SELECT COUNT(*) as count FROM trades WHERE user_id = $1 AND created_at >= NOW() - INTERVAL \'$2 days\'',
             [userId, period]
         );
 
-        // Total volume
-        const [totalVolume] = await pool.execute(
-            'SELECT SUM(total_amount) as total FROM trades WHERE user_id = ? AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)',
+        const totalVolume = await pool.query(
+            'SELECT SUM(total_amount) as total FROM trades WHERE user_id = $1 AND created_at >= NOW() - INTERVAL \'$2 days\'',
             [userId, period]
         );
 
-        // Win rate (assuming completed buy trades followed by higher sell prices indicate wins)
-        const [completedTrades] = await pool.execute(
-            'SELECT COUNT(*) as total, SUM(CASE WHEN trade_type = "sell" AND status = "completed" THEN 1 ELSE 0 END) as sells FROM trades WHERE user_id = ? AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)',
+        const completedTrades = await pool.query(
+            'SELECT COUNT(*) as total, SUM(CASE WHEN trade_type = \'sell\' AND status = \'completed\' THEN 1 ELSE 0 END) as sells FROM trades WHERE user_id = $1 AND created_at >= NOW() - INTERVAL \'$2 days\'',
             [userId, period]
         );
 
-        // Recent activity (last 7 days breakdown)
-        const [recentActivity] = await pool.execute(`
+        const recentActivity = await pool.query(`
             SELECT 
                 DATE(created_at) as date,
                 COUNT(*) as trades,
                 SUM(total_amount) as volume
             FROM trades 
-            WHERE user_id = ? AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+            WHERE user_id = $1 AND created_at >= NOW() - INTERVAL '7 days'
             GROUP BY DATE(created_at)
             ORDER BY date DESC
         `, [userId]);
 
         const stats = {
-            totalTrades: tradesCount[0].count,
-            totalVolume: totalVolume[0].total || 0,
-            winRate: completedTrades[0].total > 0 ? ((completedTrades[0].sells / completedTrades[0].total) * 100).toFixed(1) : 0,
-            recentActivity
+            totalTrades: tradesCount.rows[0].count,
+            totalVolume: totalVolume.rows[0].total || 0,
+            winRate: completedTrades.rows[0].total > 0 ? ((completedTrades.rows[0].sells / completedTrades.rows[0].total) * 100).toFixed(1) : 0,
+            recentActivity: recentActivity.rows
         };
 
         res.json({ success: true, stats });
@@ -1319,9 +1236,9 @@ app.get('/api/orders/export', authRequired, async (req, res) => {
         const userId = req.session.userId;
         const { type = 'all', format = 'csv' } = req.query;
 
-        // Get all orders (similar to /api/orders but without pagination)
         let baseQueries = [];
         let queryParams = [];
+        let paramIndex = 1;
 
         if (type === 'all' || type === 'trades') {
             baseQueries.push(`
@@ -1334,7 +1251,7 @@ app.get('/api/orders/export', authRequired, async (req, res) => {
                     total_amount as Amount,
                     status as Status,
                     created_at as Date
-                FROM trades WHERE user_id = ?
+                FROM trades WHERE user_id = ${paramIndex++}
             `);
             queryParams.push(userId);
         }
@@ -1350,7 +1267,7 @@ app.get('/api/orders/export', authRequired, async (req, res) => {
                     amount as Amount,
                     status as Status,
                     created_at as Date
-                FROM deposits WHERE user_id = ?
+                FROM deposits WHERE user_id = ${paramIndex++}
             `);
             queryParams.push(userId);
         }
@@ -1366,7 +1283,7 @@ app.get('/api/orders/export', authRequired, async (req, res) => {
                     amount as Amount,
                     status as Status,
                     created_at as Date
-                FROM withdrawals WHERE user_id = ?
+                FROM withdrawals WHERE user_id = ${paramIndex++}
             `);
             queryParams.push(userId);
         }
@@ -1378,20 +1295,19 @@ app.get('/api/orders/export', authRequired, async (req, res) => {
             ORDER BY Date DESC
         `;
 
-        const [orders] = await pool.execute(query, queryParams);
+        const orders = await pool.query(query, queryParams);
 
         if (format === 'csv') {
-            // Generate CSV
             const csvHeader = 'Type,Symbol,Action,Quantity,Price,Amount,Status,Date\n';
-            const csvData = orders.map(order => 
-                `${order.Type},${order.Symbol || ''},${order.Action || ''},${order.Quantity || ''},${order.Price || ''},${order.Amount},${order.Status},${order.Date}`
+            const csvData = orders.rows.map(order => 
+                `${order.type},${order.symbol || ''},${order.action || ''},${order.quantity || ''},${order.price || ''},${order.amount},${order.status},${order.date}`
             ).join('\n');
 
             res.setHeader('Content-Type', 'text/csv');
             res.setHeader('Content-Disposition', `attachment; filename="swiftxchange-orders-${new Date().toISOString().split('T')[0]}.csv"`);
             res.send(csvHeader + csvData);
         } else {
-            res.json({ success: true, orders });
+            res.json({ success: true, orders: orders.rows });
         }
 
     } catch (err) {
@@ -1406,16 +1322,16 @@ app.get('/api/account/info', authRequired, async (req, res) => {
         const userId = req.session.userId;
         const accountType = req.session.accountType || 'demo';
 
-        const [account] = await pool.execute(
-            'SELECT account_number, account_type, balance, currency FROM trading_accounts WHERE user_id = ? AND account_type = ?',
+        const account = await pool.query(
+            'SELECT account_number, account_type, balance, currency FROM trading_accounts WHERE user_id = $1 AND account_type = $2',
             [userId, accountType]
         );
 
-        if (account.length === 0) {
+        if (account.rows.length === 0) {
             return res.json({ success: false, message: "Account not found" });
         }
 
-        res.json({ success: true, account: account[0] });
+        res.json({ success: true, account: account.rows[0] });
 
     } catch (err) {
         console.error('Account info error:', err);
@@ -1423,38 +1339,18 @@ app.get('/api/account/info', authRequired, async (req, res) => {
     }
 });
 
-
-// Authentication middleware (if you don't have one)
-function authenticateUser(req, res, next) {
-    // This should check if user is logged in
-    // Could be session-based, JWT-based, etc.
-    
-    // Example for session-based:
-    if (req.session && req.session.user) {
-        req.user = req.session.user;
-        next();
-    } else {
-        res.status(401).json({
-            success: false,
-            message: 'Authentication required'
-        });
-    }
-}
-
-// Trade endpoint (add this to your server.js)
+// Trade endpoint
 app.post('/api/trade', authRequired, async (req, res) => {
     const { accountId, asset, quantity, price, totalAmount, tradeType, assetName } = req.body;
     try {
-        // Insert trade record
-        await pool.execute(
-            "INSERT INTO trades (user_id, account_id, asset, quantity, price, total_amount, trade_type, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'completed')",
+        await pool.query(
+            "INSERT INTO trades (user_id, account_id, asset, quantity, price, total_amount, trade_type, status) VALUES ($1, $2, $3, $4, $5, $6, $7, 'completed')",
             [req.session.userId, accountId, asset, quantity, price, totalAmount, tradeType]
         );
         
-        // Update account balance
         const balanceChange = tradeType === 'buy' ? -totalAmount : totalAmount;
-        await pool.execute(
-            "UPDATE trading_accounts SET balance = balance + ? WHERE id = ? AND user_id = ?",
+        await pool.query(
+            "UPDATE trading_accounts SET balance = balance + $1 WHERE id = $2 AND user_id = $3",
             [balanceChange, accountId, req.session.userId]
         );
         
@@ -1465,13 +1361,14 @@ app.post('/api/trade', authRequired, async (req, res) => {
     }
 });
 
-
 // Deposit
 app.post('/api/deposit', authRequired, async (req, res) => {
     const { accountId, amount, method, currency } = req.body;
     try {
-        await pool.execute("INSERT INTO deposits (user_id, account_id, amount, currency, payment_method, reference_number, status) VALUES (?, ?, ?, ?, ?, ?, 'pending')",
-            [req.session.userId, accountId, amount, currency, method, 'REF' + Date.now()]);
+        await pool.query(
+            "INSERT INTO deposits (user_id, account_id, amount, currency, payment_method, reference_number, status) VALUES ($1, $2, $3, $4, $5, $6, 'pending')",
+            [req.session.userId, accountId, amount, currency, method, 'REF' + Date.now()]
+        );
         res.json({ success: true, message: "Deposit request submitted" });
     } catch (err) {
         console.error(err);
@@ -1483,8 +1380,10 @@ app.post('/api/deposit', authRequired, async (req, res) => {
 app.post('/api/withdraw', authRequired, async (req, res) => {
     const { accountId, amount, method, bankDetails, currency } = req.body;
     try {
-        await pool.execute("INSERT INTO withdrawals (user_id, account_id, amount, currency, payment_method, bank_details, reference_number, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')",
-            [req.session.userId, accountId, amount, currency, method, JSON.stringify(bankDetails), 'WD' + Date.now()]);
+        await pool.query(
+            "INSERT INTO withdrawals (user_id, account_id, amount, currency, payment_method, bank_details, reference_number, status) VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')",
+            [req.session.userId, accountId, amount, currency, method, JSON.stringify(bankDetails), 'WD' + Date.now()]
+        );
         res.json({ success: true, message: "Withdrawal request submitted" });
     } catch (err) {
         console.error(err);
@@ -1500,21 +1399,12 @@ app.post('/api/logout', (req, res) => {
     });
 });
 
-// Replace your existing verify-admin-access endpoint with this:
+// Verify admin access
 app.get('/api/verify-admin-access', (req, res) => {
-    console.log('🔐 Verifying admin access for session:', req.sessionID);
-    console.log('📋 Session data:', req.session);
-    console.log('🍪 Request headers cookies:', req.headers.cookie);
-    console.log('🌐 Request origin:', req.headers.origin);
-    console.log('👤 Session userId:', req.session.userId);
-    console.log('🔑 Session isAdmin:', req.session.isAdmin);
-    
     if (!req.session.userId || !req.session.isAdmin) {
-        console.log('❌ Admin access denied - no session data');
         return res.json({ success: false, message: "Admin access required" });
     }
     
-    console.log('✅ Admin access verified');
     res.json({ 
         success: true, 
         admin: {
@@ -1524,13 +1414,9 @@ app.get('/api/verify-admin-access', (req, res) => {
         }
     });
 });
-// ADD THE DEBUG ENDPOINT HERE:
+
+// Debug admin session
 app.get('/api/debug-admin-session', (req, res) => {
-    console.log('Session ID:', req.sessionID);
-    console.log('Session data:', req.session);
-    console.log('User ID from session:', req.session.userId);
-    console.log('Is Admin from session:', req.session.isAdmin);
-    
     res.json({
         sessionExists: !!req.session,
         sessionId: req.sessionID,
@@ -1541,141 +1427,105 @@ app.get('/api/debug-admin-session', (req, res) => {
     });
 });
 
-
-
-// ================= Transaction History Routes ================= //
-
-// 1. Trades History
+// Trades History
 app.get('/api/trades', authRequired, async (req, res) => {
     try {
-        const [rows] = await pool.execute(
+        const result = await pool.query(
             "SELECT id, asset, asset_name, quantity, price, total_amount, trade_type, status, created_at " +
-            "FROM trades WHERE user_id=? ORDER BY created_at DESC",
+            "FROM trades WHERE user_id = $1 ORDER BY created_at DESC",
             [req.session.userId]
         );
-        res.json({ success: true, trades: rows });
+        res.json({ success: true, trades: result.rows });
     } catch (err) {
         console.error(err);
         res.json({ success: false, message: "Failed to fetch trades" });
     }
 });
 
-// 2. Deposits History
+// Deposits History
 app.get('/api/deposits', authRequired, async (req, res) => {
     try {
-        const [rows] = await pool.execute(
+        const result = await pool.query(
             "SELECT id, amount, currency, payment_method, reference_number, status, created_at " +
-            "FROM deposits WHERE user_id=? ORDER BY created_at DESC",
+            "FROM deposits WHERE user_id = $1 ORDER BY created_at DESC",
             [req.session.userId]
         );
-        res.json({ success: true, deposits: rows });
+        res.json({ success: true, deposits: result.rows });
     } catch (err) {
         console.error(err);
         res.json({ success: false, message: "Failed to fetch deposits" });
     }
 });
 
-// 3. Withdrawals History
+// Withdrawals History
 app.get('/api/withdrawals', authRequired, async (req, res) => {
     try {
-        const [rows] = await pool.execute(
+        const result = await pool.query(
             "SELECT id, amount, currency, payment_method, bank_details, reference_number, status, created_at " +
-            "FROM withdrawals WHERE user_id=? ORDER BY created_at DESC",
+            "FROM withdrawals WHERE user_id = $1 ORDER BY created_at DESC",
             [req.session.userId]
         );
-        res.json({ success: true, withdrawals: rows });
+        res.json({ success: true, withdrawals: result.rows });
     } catch (err) {
         console.error(err);
         res.json({ success: false, message: "Failed to fetch withdrawals" });
     }
 });
 
-// 4. Combined Transaction History
-app.get('/api/history', authRequired, async (req, res) => {
-    try {
-        const [rows] = await pool.query(`
-            SELECT 'trade' AS type, id, asset AS description, total_amount AS amount, 'USD' AS currency, status, created_at
-            FROM trades
-            WHERE user_id=?
-
-            UNION ALL
-
-            SELECT 'deposit' AS type, id, payment_method AS description, amount, currency, status, created_at
-            FROM deposits
-            WHERE user_id=?
-
-            UNION ALL
-
-            SELECT 'withdrawal' AS type, id, payment_method AS description, amount, currency, status, created_at
-            FROM withdrawals
-            WHERE user_id=?
-
-            ORDER BY created_at DESC
-        `, [req.session.userId, req.session.userId, req.session.userId]);
-
-        res.json({ success: true, history: rows });
-    } catch (err) {
-        console.error(err);
-        res.json({ success: false, message: "Failed to fetch history" });
-    }
-});
-
+// Combined Transaction History
 app.get('/api/history', authRequired, async (req, res) => {
     try {
         const { limit = 50 } = req.query;
         
-        const [rows] = await pool.query(`
+        const result = await pool.query(`
             SELECT 'trade' AS type, id, asset AS description, total_amount AS amount, 'USD' AS currency, status, created_at
             FROM trades
-            WHERE user_id=?
+            WHERE user_id = $1
 
             UNION ALL
 
             SELECT 'deposit' AS type, id, payment_method AS description, amount, currency, status, created_at
             FROM deposits
-            WHERE user_id=?
+            WHERE user_id = $1
 
             UNION ALL
 
             SELECT 'withdrawal' AS type, id, payment_method AS description, amount, currency, status, created_at
             FROM withdrawals
-            WHERE user_id=?
+            WHERE user_id = $1
 
             ORDER BY created_at DESC
-            LIMIT ?
-        `, [req.session.userId, req.session.userId, req.session.userId, parseInt(limit)]);
+            LIMIT $2
+        `, [req.session.userId, parseInt(limit)]);
 
-        res.json({ success: true, history: rows });
+        res.json({ success: true, history: result.rows });
     } catch (err) {
         console.error(err);
         res.json({ success: false, message: "Failed to fetch history" });
     }
 });
 
-// ================= Settings Routes ================= // 
 // Get user profile
 app.get('/api/profile', authRequired, async (req, res) => {
     try {
-        const [user] = await pool.execute(
-            "SELECT first_name, last_name, email, phone, country FROM users WHERE id=?",
+        const result = await pool.query(
+            "SELECT first_name, last_name, email, phone, country FROM users WHERE id = $1",
             [req.session.userId]
         );
-        res.json({ success: true, user: user[0] });
+        res.json({ success: true, user: result.rows[0] });
     } catch (err) {
         res.json({ success: false, message: "Failed to fetch profile" });
     }
 });
 
-
-
-// Admin endpoint to get all users with their account balances
+// Admin: Get all users
 app.get('/api/admin/users', authRequired, async (req, res) => {
     try {
         if (!req.session.isAdmin) {
             return res.json({ success: false, message: "Admin access required" });
         }
 
-        const [users] = await pool.execute(`
+        const users = await pool.query(`
             SELECT 
                 u.id, u.email, u.first_name, u.last_name, u.username, 
                 u.phone, u.country, u.status, u.role, u.email_verified, 
@@ -1686,40 +1536,33 @@ app.get('/api/admin/users', authRequired, async (req, res) => {
             ORDER BY u.created_at DESC
         `);
 
-        res.json({ success: true, users: users });
+        res.json({ success: true, users: users.rows });
     } catch (error) {
         console.error('Database error fetching users:', error);
         res.json({ success: false, message: `Database error: ${error.message}` });
     }
 });
-        
-// Admin endpoint to get dashboard stats
+
+// Admin dashboard stats
 app.get('/api/admin/dashboard-stats', authRequired, async (req, res) => {
     try {
         if (!req.session.isAdmin) {
             return res.json({ success: false, message: "Admin access required" });
         }
 
-        // Get total users
-        const [userCount] = await pool.execute('SELECT COUNT(*) as count FROM users');
-        
-        // Get total balance from trading accounts
-        const [balanceSum] = await pool.execute('SELECT SUM(balance) as total FROM trading_accounts');
-        
-        // Get total trades
-        const [tradesCount] = await pool.execute('SELECT COUNT(*) as count FROM trades');
-        
-        // Get pending deposits and withdrawals
-        const [pendingDeposits] = await pool.execute("SELECT COUNT(*) as count FROM deposits WHERE status = 'pending'");
-        const [pendingWithdrawals] = await pool.execute("SELECT COUNT(*) as count FROM withdrawals WHERE status = 'pending'");
+        const userCount = await pool.query('SELECT COUNT(*) as count FROM users');
+        const balanceSum = await pool.query('SELECT SUM(balance) as total FROM trading_accounts');
+        const tradesCount = await pool.query('SELECT COUNT(*) as count FROM trades');
+        const pendingDeposits = await pool.query("SELECT COUNT(*) as count FROM deposits WHERE status = 'pending'");
+        const pendingWithdrawals = await pool.query("SELECT COUNT(*) as count FROM withdrawals WHERE status = 'pending'");
         
         res.json({ 
             success: true, 
             stats: {
-                totalUsers: userCount[0].count,
-                totalBalance: balanceSum[0].total || 0,
-                totalTrades: tradesCount[0].count,
-                pendingActions: pendingDeposits[0].count + pendingWithdrawals[0].count
+                totalUsers: userCount.rows[0].count,
+                totalBalance: balanceSum.rows[0].total || 0,
+                totalTrades: tradesCount.rows[0].count,
+                pendingActions: parseInt(pendingDeposits.rows[0].count) + parseInt(pendingWithdrawals.rows[0].count)
             }
         });
     } catch (error) {
@@ -1728,91 +1571,92 @@ app.get('/api/admin/dashboard-stats', authRequired, async (req, res) => {
     }
 });
 
+// Admin: Get all trades
 app.get('/api/admin/trades', authRequired, async (req, res) => {
     try {
         if (!req.session.isAdmin) {
             return res.json({ success: false, message: "Admin access required" });
         }
 
-        const [trades] = await pool.execute(`
+        const trades = await pool.query(`
             SELECT t.*, u.first_name, u.last_name, u.email 
             FROM trades t 
             JOIN users u ON t.user_id = u.id 
             ORDER BY t.created_at DESC
         `);
 
-        res.json({ success: true, trades });
+        res.json({ success: true, trades: trades.rows });
     } catch (error) {
         console.error('Admin trades error:', error);
         res.json({ success: false, message: 'Failed to fetch trades' });
     }
 });
 
-// Get all deposits for admin
+// Admin: Get all deposits
 app.get('/api/admin/deposits', authRequired, async (req, res) => {
     try {
         if (!req.session.isAdmin) {
             return res.json({ success: false, message: "Admin access required" });
         }
 
-        const [deposits] = await pool.execute(`
+        const deposits = await pool.query(`
             SELECT d.*, u.first_name, u.last_name, u.email 
             FROM deposits d 
             JOIN users u ON d.user_id = u.id 
             ORDER BY d.created_at DESC
         `);
 
-        res.json({ success: true, deposits });
+        res.json({ success: true, deposits: deposits.rows });
     } catch (error) {
         console.error('Admin deposits error:', error);
         res.json({ success: false, message: 'Failed to fetch deposits' });
     }
 });
 
-// Get all withdrawals for admin  
+// Admin: Get all withdrawals
 app.get('/api/admin/withdrawals', authRequired, async (req, res) => {
     try {
         if (!req.session.isAdmin) {
             return res.json({ success: false, message: "Admin access required" });
         }
 
-        const [withdrawals] = await pool.execute(`
+        const withdrawals = await pool.query(`
             SELECT w.*, u.first_name, u.last_name, u.email 
             FROM withdrawals w 
             JOIN users u ON w.user_id = u.id 
             ORDER BY w.created_at DESC
         `);
 
-        res.json({ success: true, withdrawals });
+        res.json({ success: true, withdrawals: withdrawals.rows });
     } catch (error) {
         console.error('Admin withdrawals error:', error);
         res.json({ success: false, message: 'Failed to fetch withdrawals' });
     }
 });
 
-// Admin endpoint to update user balance
+// Admin: Update user balance
 app.post('/api/admin/update-balance', authRequired, async (req, res) => {
     try {
         if (!req.session.isAdmin) {
             return res.json({ success: false, message: "Admin access required" });
         }
 
-        const { userId, amount, action } = req.body; // action: 'credit' or 'debit'
+        const { userId, amount, action } = req.body;
         
         if (action === 'credit') {
-            await pool.execute('UPDATE users SET balance = balance + ? WHERE id = ?', [amount, userId]);
+            await pool.query('UPDATE trading_accounts SET balance = balance + $1 WHERE user_id = $2', [amount, userId]);
         } else if (action === 'debit') {
-            await pool.execute('UPDATE users SET balance = balance - ? WHERE id = ?', [amount, userId]);
+            await pool.query('UPDATE trading_accounts SET balance = balance - $1 WHERE user_id = $2', [amount, userId]);
         }
 
-        res.json({ success: true, message: `Successfully ${action}ed $${amount}` });
+        res.json({ success: true, message: `Successfully ${action}ed ${amount}` });
     } catch (error) {
         console.error('Error updating balance:', error);
         res.json({ success: false, message: "Failed to update balance" });
     }
 });
 
-// Update deposit status
+// Admin: Update deposit status
 app.post('/api/admin/update-deposit-status', authRequired, async (req, res) => {
     try {
         if (!req.session.isAdmin) {
@@ -1821,18 +1665,17 @@ app.post('/api/admin/update-deposit-status', authRequired, async (req, res) => {
 
         const { depositId, status } = req.body;
         
-        await pool.execute(
-            'UPDATE deposits SET status = ? WHERE id = ?',
+        await pool.query(
+            'UPDATE deposits SET status = $1 WHERE id = $2',
             [status, depositId]
         );
 
-        // If approved, update user balance
         if (status === 'completed') {
-            const [deposit] = await pool.execute('SELECT * FROM deposits WHERE id = ?', [depositId]);
-            if (deposit[0]) {
-                await pool.execute(
-                    'UPDATE trading_accounts SET balance = balance + ? WHERE user_id = ?',
-                    [deposit[0].amount, deposit[0].user_id]
+            const deposit = await pool.query('SELECT * FROM deposits WHERE id = $1', [depositId]);
+            if (deposit.rows[0]) {
+                await pool.query(
+                    'UPDATE trading_accounts SET balance = balance + $1 WHERE user_id = $2',
+                    [deposit.rows[0].amount, deposit.rows[0].user_id]
                 );
             }
         }
@@ -1844,7 +1687,7 @@ app.post('/api/admin/update-deposit-status', authRequired, async (req, res) => {
     }
 });
 
-// Update withdrawal status
+// Admin: Update withdrawal status
 app.post('/api/admin/update-withdrawal-status', authRequired, async (req, res) => {
     try {
         if (!req.session.isAdmin) {
@@ -1853,18 +1696,17 @@ app.post('/api/admin/update-withdrawal-status', authRequired, async (req, res) =
 
         const { withdrawalId, status } = req.body;
         
-        await pool.execute(
-            'UPDATE withdrawals SET status = ? WHERE id = ?',
+        await pool.query(
+            'UPDATE withdrawals SET status = $1 WHERE id = $2',
             [status, withdrawalId]
         );
 
-        // If rejected, refund balance
         if (status === 'failed') {
-            const [withdrawal] = await pool.execute('SELECT * FROM withdrawals WHERE id = ?', [withdrawalId]);
-            if (withdrawal[0]) {
-                await pool.execute(
-                    'UPDATE trading_accounts SET balance = balance + ? WHERE user_id = ?',
-                    [withdrawal[0].amount, withdrawal[0].user_id]
+            const withdrawal = await pool.query('SELECT * FROM withdrawals WHERE id = $1', [withdrawalId]);
+            if (withdrawal.rows[0]) {
+                await pool.query(
+                    'UPDATE trading_accounts SET balance = balance + $1 WHERE user_id = $2',
+                    [withdrawal.rows[0].amount, withdrawal.rows[0].user_id]
                 );
             }
         }
@@ -1876,12 +1718,12 @@ app.post('/api/admin/update-withdrawal-status', authRequired, async (req, res) =
     }
 });
 
-// Update user profile  
+// Update user profile
 app.put('/api/profile', authRequired, async (req, res) => {
     const { firstName, lastName, email, phone, country } = req.body;
     try {
-        await pool.execute(
-            "UPDATE users SET first_name=?, last_name=?, email=?, phone=?, country=? WHERE id=?",
+        await pool.query(
+            "UPDATE users SET first_name = $1, last_name = $2, email = $3, phone = $4, country = $5 WHERE id = $6",
             [firstName, lastName, email, phone, country, req.session.userId]
         );
         res.json({ success: true, message: "Profile updated successfully" });
@@ -1894,15 +1736,22 @@ app.put('/api/profile', authRequired, async (req, res) => {
 app.put('/api/change-password', authRequired, async (req, res) => {
     const { currentPassword, newPassword } = req.body;
     try {
-        const [user] = await pool.execute("SELECT password_hash FROM users WHERE id=?", [req.session.userId]);
-        const valid = await bcrypt.compare(currentPassword, user[0].password_hash);
+        const user = await pool.query(
+            "SELECT password_hash FROM users WHERE id = $1", 
+            [req.session.userId]
+        );
+        
+        const valid = await bcrypt.compare(currentPassword, user.rows[0].password_hash);
         
         if (!valid) {
             return res.json({ success: false, message: "Current password is incorrect" });
         }
         
         const newHash = await bcrypt.hash(newPassword, 12);
-        await pool.execute("UPDATE users SET password_hash=? WHERE id=?", [newHash, req.session.userId]);
+        await pool.query(
+            "UPDATE users SET password_hash = $1 WHERE id = $2", 
+            [newHash, req.session.userId]
+        );
         
         res.json({ success: true, message: "Password updated successfully" });
     } catch (err) {
@@ -1913,64 +1762,6 @@ app.put('/api/change-password', authRequired, async (req, res) => {
 // Start server
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
-   console.log(`📊 Database: ${mysql_url.pathname.slice(1)}`);
+    console.log(`📊 Database: PostgreSQL`);
+    console.log(`🔗 Connected to: ${process.env.DATABASE_URL ? 'Custom Database' : 'Default'}`);
 });
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
